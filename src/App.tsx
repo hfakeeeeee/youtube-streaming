@@ -3,6 +3,7 @@ import {
   ChevronRight,
   Crown,
   Headphones,
+  History,
   ListMusic,
   LoaderCircle,
   LockKeyhole,
@@ -55,6 +56,31 @@ const EMPTY_PLAYBACK: PlaybackState = {
   changedBy: '',
 };
 
+interface RecentRoom {
+  roomId: string;
+  name: string;
+  role: Role;
+  lastJoinedAt: number;
+}
+
+const RECENT_ROOMS_KEY = 'syncbox:recent-rooms';
+
+function loadRecentRooms(): RecentRoom[] {
+  try {
+    const value = JSON.parse(localStorage.getItem(RECENT_ROOMS_KEY) ?? '[]') as RecentRoom[];
+    return Array.isArray(value) ? value.filter((room) => room.roomId && room.name).slice(0, 6) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveRecentRoom(roomId: string, name: string, role: Role): RecentRoom[] {
+  const room: RecentRoom = { roomId, name, role, lastJoinedAt: Date.now() };
+  const rooms = [room, ...loadRecentRooms().filter((item) => item.roomId !== roomId)].slice(0, 6);
+  localStorage.setItem(RECENT_ROOMS_KEY, JSON.stringify(rooms));
+  return rooms;
+}
+
 function routeFromHash() {
   const match = window.location.hash.match(/^#\/room\/([A-Z0-9]+)/i);
   return match ? { page: 'room' as const, roomId: match[1].toUpperCase() } : { page: 'home' as const };
@@ -81,6 +107,7 @@ function HomePage() {
   const [roomCode, setRoomCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [recentRooms, setRecentRooms] = useState(loadRecentRooms);
 
   function saveName() {
     const cleaned = name.trim().slice(0, 32);
@@ -96,6 +123,7 @@ function HomePage() {
     try {
       const displayName = saveName();
       const id = await createRoom(roomName, displayName);
+      setRecentRooms(saveRecentRoom(id, roomName.trim() || `${displayName}'s room`, 'host'));
       window.location.hash = `#/room/${id}`;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Không thể tạo phòng.');
@@ -110,7 +138,8 @@ function HomePage() {
     setError('');
     try {
       const displayName = saveName();
-      const { roomId } = await joinRoom(roomCode, displayName);
+      const { roomId, role, roomName: joinedRoomName } = await joinRoom(roomCode, displayName);
+      setRecentRooms(saveRecentRoom(roomId, joinedRoomName, role));
       window.location.hash = `#/room/${roomId}`;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Không thể vào phòng.');
@@ -153,6 +182,27 @@ function HomePage() {
             <button disabled={busy || !roomCode.trim() || !firebaseConfigured}>Tham gia <ChevronRight size={17} /></button>
           </form>
           {error && <p className="form-error">{error}</p>}
+          {recentRooms.length > 0 && (
+            <div className="recent-rooms">
+              <div className="recent-heading"><span><History size={15} /> Phòng gần đây</span><small>{recentRooms.length}/6</small></div>
+              <div className="recent-list">
+                {recentRooms.map((room) => (
+                  <article className="recent-room" key={room.roomId}>
+                    <a href={`#/room/${room.roomId}`}>
+                      <span className="recent-room-icon">{room.name.slice(0, 1).toUpperCase()}</span>
+                      <span className="recent-room-copy"><strong>{room.name}</strong><small>{room.roomId} · {room.role === 'host' ? 'Host' : room.role === 'dj' ? 'DJ' : 'Listener'}</small></span>
+                      <ChevronRight size={16} />
+                    </a>
+                    <button aria-label={`Xóa ${room.name} khỏi phòng gần đây`} onClick={() => {
+                      const next = recentRooms.filter((item) => item.roomId !== room.roomId);
+                      localStorage.setItem(RECENT_ROOMS_KEY, JSON.stringify(next));
+                      setRecentRooms(next);
+                    }}><Trash2 size={14} /></button>
+                  </article>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </section>
       <section className="how" id="how-it-works">
@@ -203,7 +253,8 @@ function RoomPage({ roomId }: { roomId: string }) {
         const user = await ensureUser();
         if (!active) return;
         setUid(user.uid);
-        await joinRoom(roomId, displayName);
+        const joined = await joinRoom(roomId, displayName);
+        saveRecentRoom(joined.roomId, joined.roomName, joined.role);
         unsubscribes.push(
           subscribeRoom<RoomMeta | null>(roomId, 'meta', setMeta),
           subscribeRoom<PlaybackState | null>(roomId, 'playback', (value) => setPlayback(value ?? EMPTY_PLAYBACK)),

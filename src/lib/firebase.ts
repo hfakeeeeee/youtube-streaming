@@ -101,7 +101,7 @@ export async function createRoom(name: string, displayName: string): Promise<str
   return roomId;
 }
 
-export async function joinRoom(roomIdInput: string, displayName: string): Promise<{ roomId: string; role: Role }> {
+export async function joinRoom(roomIdInput: string, displayName: string): Promise<{ roomId: string; role: Role; roomName: string }> {
   const { db } = requireFirebase();
   const user = await ensureUser();
   const roomId = roomIdInput.trim().toUpperCase();
@@ -119,7 +119,7 @@ export async function joinRoom(roomIdInput: string, displayName: string): Promis
   const memberRef = ref(db, `rooms/${roomId}/members/${user.uid}`);
   await set(memberRef, member);
   await onDisconnect(memberRef).remove();
-  return { roomId, role };
+  return { roomId, role, roomName: meta.name };
 }
 
 export function leaveRoom(roomId: string, uid: string): Promise<void> {

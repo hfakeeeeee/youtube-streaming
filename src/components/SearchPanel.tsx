@@ -73,7 +73,6 @@ export function SearchPanel({ canAdd, onAdd }: Props) {
         </div>
         <div className="search-meta">
           {quota && <span className={`quota-pill ${quota.remaining <= 15 ? 'low' : ''}`} title="Số lượt ước tính do Worker ghi nhận"><Gauge size={13} /> ~{quota.remaining}/{quota.limit} lượt tìm</span>}
-          <kbd>Enter để tìm</kbd>
         </div>
       </div>
       <div className="search-box">
