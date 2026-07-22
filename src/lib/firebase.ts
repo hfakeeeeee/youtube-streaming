@@ -108,13 +108,12 @@ export async function joinRoom(roomIdInput: string, displayName: string): Promis
   const metaSnap = await get(ref(db, `rooms/${roomId}/meta`));
   if (!metaSnap.exists()) throw new Error('Không tìm thấy phòng này.');
   const meta = metaSnap.val() as RoomMeta;
-  const existing = await get(ref(db, `rooms/${roomId}/members/${user.uid}`));
-  const role: Role = meta.hostUid === user.uid ? 'host' : (existing.val()?.role ?? 'listener');
+  const role: Role = meta.hostUid === user.uid ? 'host' : 'listener';
   const member: Member = {
     uid: user.uid,
     name: displayName.trim().slice(0, 32) || 'Guest',
     role,
-    joinedAt: existing.val()?.joinedAt ?? Date.now(),
+    joinedAt: Date.now(),
     online: true,
   };
   const memberRef = ref(db, `rooms/${roomId}/members/${user.uid}`);
