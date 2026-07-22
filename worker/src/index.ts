@@ -228,6 +228,7 @@ async function video(request: Request, env: Env, videoId: string) {
 
 async function playlist(request: Request, env: Env, playlistId: string) {
   if (!/^[\w-]{10,64}$/.test(playlistId)) return json(request, env, { error: 'Playlist ID không hợp lệ.' }, 400);
+  if (/^RD/.test(playlistId)) return json(request, env, { error: 'YouTube Mix là playlist động và có thể chứa bài đề xuất. Hãy dùng playlist tĩnh.' }, 400);
   const playlistItems = await youtube('playlistItems', new URLSearchParams({
     part: 'snippet,contentDetails', playlistId, maxResults: '50',
   }), env);

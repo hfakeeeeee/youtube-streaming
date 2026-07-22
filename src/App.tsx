@@ -15,7 +15,9 @@ import {
   ListMusic,
   LoaderCircle,
   LockKeyhole,
+  Maximize2,
   MessageCircle,
+  Minimize2,
   Pause,
   Play,
   Radio,
@@ -298,6 +300,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [needsActivation, setNeedsActivation] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [displayPosition, setDisplayPosition] = useState(0);
   const [localVolume, setLocalVolume] = useState(() => Number(localStorage.getItem('syncbox:volume') ?? 80));
@@ -311,6 +314,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [dropTarget, setDropTarget] = useState<{ queueId: string; position: 'before' | 'after' } | null>(null);
   const [undoQueue, setUndoQueue] = useState<{ items: QueueItem[]; label: string } | null>(null);
   const playerRef = useRef<PlayerHandle>(null);
+  const videoStageRef = useRef<HTMLDivElement>(null);
   const lastSponsorSkip = useRef('');
   const undoTimer = useRef<number | undefined>(undefined);
 
@@ -377,6 +381,19 @@ function RoomPage({ roomId }: { roomId: string }) {
   }, [isHost, roomId]);
 
   useEffect(() => () => window.clearTimeout(undoTimer.current), []);
+
+  useEffect(() => {
+    const updateFullscreen = () => {
+      const webkitDocument = document as Document & { webkitFullscreenElement?: Element | null };
+      setFullscreen((document.fullscreenElement ?? webkitDocument.webkitFullscreenElement) === videoStageRef.current);
+    };
+    document.addEventListener('fullscreenchange', updateFullscreen);
+    document.addEventListener('webkitfullscreenchange', updateFullscreen);
+    return () => {
+      document.removeEventListener('fullscreenchange', updateFullscreen);
+      document.removeEventListener('webkitfullscreenchange', updateFullscreen);
+    };
+  }, []);
 
   useEffect(() => {
     if (!helpOpen) return;
@@ -613,6 +630,28 @@ function RoomPage({ roomId }: { roomId: string }) {
     playerRef.current?.setVolume(volume);
   }
 
+  async function toggleFullscreen() {
+    const stage = videoStageRef.current;
+    if (!stage) return;
+    const webkitDocument = document as Document & {
+      webkitFullscreenElement?: Element | null;
+      webkitExitFullscreen?: () => Promise<void> | void;
+    };
+    const webkitStage = stage as HTMLDivElement & { webkitRequestFullscreen?: () => Promise<void> | void };
+    try {
+      if (document.fullscreenElement || webkitDocument.webkitFullscreenElement) {
+        if (document.exitFullscreen) await document.exitFullscreen();
+        else await webkitDocument.webkitExitFullscreen?.();
+      } else if (stage.requestFullscreen) {
+        await stage.requestFullscreen();
+      } else {
+        await webkitStage.webkitRequestFullscreen?.();
+      }
+    } catch {
+      showNotice('Trình duyệt không cho phép mở toàn màn hình.', 'error');
+    }
+  }
+
   async function playQueueItem(item: QueueItem) {
     if (!canControlPlayback) return;
     await writePlayback(roomId, uid, { video: item, status: 'playing', position: 0, reason: 'queue' });
@@ -744,7 +783,7 @@ function RoomPage({ roomId }: { roomId: string }) {
         <section className="player-column">
           <SearchPanel canAdd={Boolean(canAdd)} onAdd={addToQueue} />
 
-          <div className="video-stage">
+          <div className="video-stage" ref={videoStageRef}>
             {playback.video ? (
               <YouTubePlayer
                 ref={playerRef}
@@ -761,6 +800,9 @@ function RoomPage({ roomId }: { roomId: string }) {
               <button className="activation-overlay" onClick={() => { playerRef.current?.activate(); setNeedsActivation(false); }}><Volume2 /> Bật âm thanh trên thiết bị này</button>
             )}
             {playback.reason === 'sponsorblock' && <div className="skip-toast"><Sparkles size={15} /> Đã bỏ qua sponsor</div>}
+            <button className="fullscreen-button" title={fullscreen ? 'Thoát toàn màn hình' : 'Toàn màn hình'} aria-label={fullscreen ? 'Thoát toàn màn hình' : 'Mở toàn màn hình'} onClick={() => void toggleFullscreen()} disabled={!playback.video}>
+              {fullscreen ? <Minimize2 /> : <Maximize2 />}
+            </button>
           </div>
 
           <div className="now-playing">
@@ -949,7 +991,7 @@ function RoomPage({ roomId }: { roomId: string }) {
             <fieldset className="category-settings"><legend>Phân đoạn sẽ bỏ qua</legend>{[
               ['sponsor', 'Sponsor'], ['selfpromo', 'Tự quảng bá'], ['interaction', 'Kêu gọi tương tác'],
               ['intro', 'Intro'], ['outro', 'Outro'], ['music_offtopic', 'Ngoài nội dung nhạc'],
-            ].map(([value, label]) => <label key={value}><input type="checkbox" name={`category:${value}`} defaultChecked={meta.sponsorCategories.includes(value)} /><span>{label}</span></label>)}</fieldset>
+            ].map(([value, label]) => <label key={value}><input type="checkbox" name={`category:${value}`} defaultChecked={meta.sponsorBlockEnabled && meta.sponsorCategories.includes(value)} /><span>{label}</span></label>)}</fieldset>
             <div className="ban-settings">
               <div><strong>Danh sách bị cấm</strong><small>{bans.length} thành viên</small></div>
               {bans.length > 0 ? bans.map((ban) => <div className="banned-user" key={ban.uid}><span><strong>{ban.name}</strong><small>{ban.uid.slice(0, 8)}…</small></span><button type="button" onClick={() => void unbanMember(roomId, ban.uid).then(() => showNotice(`Đã bỏ cấm ${ban.name}.`)).catch((cause) => showNotice(cause instanceof Error ? cause.message : 'Không thể bỏ cấm.', 'error'))}>Bỏ cấm</button></div>) : <p>Chưa có thành viên nào bị cấm.</p>}

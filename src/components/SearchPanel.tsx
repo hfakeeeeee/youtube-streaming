@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Gauge, Link2, LoaderCircle, Plus, Search, X } from 'lucide-react';
 import { getPlaylist, getSearchQuota, getVideo, searchVideos, type SearchQuota } from '../lib/api';
-import { isProbablyUrl, parseYouTubeInput } from '../lib/youtube';
+import { isProbablyUrl, isYouTubeMixPlaylist, parseYouTubeInput } from '../lib/youtube';
 import type { VideoItem } from '../types';
 
 interface Props {
@@ -32,6 +32,9 @@ export function SearchPanel({ canAdd, onAdd }: Props) {
     try {
       const parsed = parseYouTubeInput(value);
       if (parsed?.playlistId) {
+        if (isYouTubeMixPlaylist(parsed.playlistId)) {
+          throw new Error('Đây là YouTube Mix động nên YouTube có thể tự thêm bài đề xuất. Hãy dùng link playlist tĩnh (thường có mã bắt đầu bằng PL).');
+        }
         const videos = await getPlaylist(parsed.playlistId);
         await onAdd(videos);
         setQuery('');

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { parseYouTubeInput } from './youtube';
+import { isYouTubeMixPlaylist, parseYouTubeInput } from './youtube';
 
 describe('parseYouTubeInput', () => {
   it('parses a regular YouTube link and timestamp', () => {
@@ -17,6 +17,11 @@ describe('parseYouTubeInput', () => {
 
   it('parses playlists', () => {
     assert.equal(parseYouTubeInput('https://youtube.com/playlist?list=PL1234567890abc')?.playlistId, 'PL1234567890abc');
+  });
+
+  it('identifies dynamic YouTube Mix playlists', () => {
+    assert.equal(isYouTubeMixPlaylist('RDMMabcdefghijk'), true);
+    assert.equal(isYouTubeMixPlaylist('PL1234567890abc'), false);
   });
 
   it('rejects non-YouTube URLs', () => {

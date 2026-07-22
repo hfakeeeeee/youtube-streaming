@@ -3,6 +3,10 @@ import type { ParsedYouTubeInput, VideoItem } from '../types';
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
 const PLAYLIST_ID = /^[A-Za-z0-9_-]{10,64}$/;
 
+export function isYouTubeMixPlaylist(playlistId: string): boolean {
+  return /^RD/.test(playlistId);
+}
+
 function secondsFromTime(value: string | null): number | undefined {
   if (!value) return undefined;
   if (/^\d+$/.test(value)) return Number(value);
