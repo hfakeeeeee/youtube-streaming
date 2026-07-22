@@ -98,13 +98,22 @@ export async function createRoom(name: string, displayName: string): Promise<str
     changedBy: user.uid,
   };
 
-  await update(ref(db), {
-    [`rooms/${roomId}/meta`]: meta,
-    [`rooms/${roomId}/playback`]: playback,
-    [`roomExpirations/${roomId}`]: meta.expiresAt,
-  });
-  await joinRoom(roomId, displayName);
-  return roomId;
+  // Playback rules resolve the existing room owner, so meta must exist first.
+  await set(ref(db, `rooms/${roomId}/meta`), meta);
+  try {
+    await update(ref(db), {
+      [`rooms/${roomId}/playback`]: playback,
+      [`roomExpirations/${roomId}`]: meta.expiresAt,
+    });
+    await joinRoom(roomId, displayName);
+    return roomId;
+  } catch (error) {
+    await update(ref(db), {
+      [`rooms/${roomId}`]: null,
+      [`roomExpirations/${roomId}`]: null,
+    }).catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function joinRoom(roomIdInput: string, displayName: string): Promise<{ roomId: string; role: Role; roomName: string }> {

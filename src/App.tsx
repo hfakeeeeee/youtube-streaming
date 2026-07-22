@@ -4,8 +4,6 @@ import {
   ArrowDown,
   ArrowUp,
   Ban,
-  Check,
-  ChevronDown,
   ChevronRight,
   GripVertical,
   Globe2,
@@ -126,37 +124,19 @@ function useHashRoute() {
 }
 
 function RolePicker({ value, onChange }: { value: 'listener' | 'dj'; onChange: (role: 'listener' | 'dj') => void }) {
-  const labels = { listener: 'Listener', dj: 'DJ' } as const;
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const closeOnOutsideClick = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false); };
-    document.addEventListener('pointerdown', closeOnOutsideClick);
-    document.addEventListener('keydown', closeOnEscape);
-    return () => {
-      document.removeEventListener('pointerdown', closeOnOutsideClick);
-      document.removeEventListener('keydown', closeOnEscape);
-    };
-  }, [open]);
+  const isDj = value === 'dj';
+  const nextRole = isDj ? 'listener' : 'dj';
   return (
-    <div className={`role-picker ${open ? 'open' : ''}`} ref={rootRef}>
-      <button type="button" className="role-trigger" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((value) => !value)}>{labels[value]} <ChevronDown size={13} /></button>
-      {open && <div className="role-menu" role="menu">
-        {(['listener', 'dj'] as const).map((role) => (
-          <button key={role} type="button" className={value === role ? 'active' : ''} onClick={() => {
-            onChange(role);
-            setOpen(false);
-          }}>
-            <span><i className={`role-dot ${role}`} />{labels[role]}</span>
-            {value === role && <Check size={14} />}
-          </button>
-        ))}
-      </div>}
-    </div>
+    <button
+      type="button"
+      className={`role-toggle ${isDj ? 'dj' : 'listener'}`}
+      title={isDj ? 'DJ · Bấm để chuyển thành Listener' : 'Listener · Bấm để cấp quyền DJ'}
+      aria-label={isDj ? 'Chuyển thành Listener' : 'Cấp quyền DJ'}
+      aria-pressed={isDj}
+      onClick={() => onChange(nextRole)}
+    >
+      {isDj ? <Radio size={15} /> : <Headphones size={15} />}
+    </button>
   );
 }
 
@@ -241,7 +221,7 @@ function HomePage() {
           {!firebaseConfigured && (
             <div className="setup-warning"><Settings2 size={18} /><div><strong>Cần cấu hình Firebase</strong><span>Sao chép .env.example thành .env.local và điền thông tin dự án.</span></div></div>
           )}
-          <label>Tên của bạn<input value={name} onChange={(event) => setName(event.target.value)} placeholder="Ví dụ: Minh" maxLength={32} /></label>
+          <label>Tên của bạn<input value={name} onChange={(event) => setName(event.target.value)} placeholder="Ví dụ: Huy" maxLength={32} /></label>
           <form onSubmit={handleCreate}>
             <label>Tên phòng<input value={roomName} onChange={(event) => setRoomName(event.target.value)} placeholder="Friday focus" maxLength={60} /></label>
             <button className="primary-button" disabled={busy || !firebaseConfigured}>
