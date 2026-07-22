@@ -87,6 +87,15 @@ const EMPTY_PLAYBACK: PlaybackState = {
   changedBy: '',
 };
 
+const SPONSOR_CATEGORY_OPTIONS = [
+  ['sponsor', 'Sponsor'],
+  ['selfpromo', 'Tự quảng bá'],
+  ['interaction', 'Kêu gọi tương tác'],
+  ['intro', 'Intro'],
+  ['outro', 'Outro'],
+  ['music_offtopic', 'Ngoài nội dung nhạc'],
+] as const;
+
 interface RecentRoom {
   roomId: string;
   name: string;
@@ -309,6 +318,8 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [serverOffset, setServerOffset] = useState(0);
   const [notice, setNotice] = useState<{ message: string; tone: 'success' | 'error' } | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSponsorEnabled, setSettingsSponsorEnabled] = useState(false);
+  const [settingsSponsorCategories, setSettingsSponsorCategories] = useState<string[]>([]);
   const [helpOpen, setHelpOpen] = useState(false);
   const [draggedQueueId, setDraggedQueueId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ queueId: string; position: 'before' | 'after' } | null>(null);
@@ -681,7 +692,10 @@ function RoomPage({ roomId }: { roomId: string }) {
     event.preventDefault();
     if (!isHost) return;
     const form = new FormData(event.currentTarget);
-    const categories = ['sponsor', 'selfpromo', 'interaction', 'intro', 'outro', 'music_offtopic'].filter((category) => form.get(`category:${category}`) === 'on');
+    if (settingsSponsorEnabled && !settingsSponsorCategories.length) {
+      showNotice('Hãy chọn ít nhất một loại phân đoạn cho SponsorBlock.', 'error');
+      return;
+    }
     try {
       await saveRoomSettings(roomId, {
         ...meta!,
@@ -689,8 +703,10 @@ function RoomPage({ roomId }: { roomId: string }) {
         isPublic: form.get('isPublic') === 'on',
         allowListenersToAdd: form.get('allowListenersToAdd') === 'on',
         chatEnabled: form.get('chatEnabled') === 'on',
-        sponsorBlockEnabled: form.get('sponsorBlockEnabled') === 'on',
-        sponsorCategories: categories.length ? categories : ['sponsor'],
+        sponsorBlockEnabled: settingsSponsorEnabled,
+        sponsorCategories: settingsSponsorEnabled
+          ? settingsSponsorCategories
+          : meta?.sponsorCategories?.length ? meta.sponsorCategories : ['sponsor'],
         expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
       });
       setSettingsOpen(false);
@@ -698,6 +714,12 @@ function RoomPage({ roomId }: { roomId: string }) {
     } catch (cause) {
       showNotice(cause instanceof Error ? cause.message : 'Không thể lưu cài đặt.', 'error');
     }
+  }
+
+  function openSettings() {
+    setSettingsSponsorEnabled(Boolean(meta?.sponsorBlockEnabled));
+    setSettingsSponsorCategories(meta?.sponsorBlockEnabled ? [...(meta.sponsorCategories ?? [])] : []);
+    setSettingsOpen(true);
   }
 
   async function handOffHost(member: Member) {
@@ -771,7 +793,7 @@ function RoomPage({ roomId }: { roomId: string }) {
           <span className="online-pill"><i /> {members.length} đang nghe</span>
           <button onClick={() => setHelpOpen(true)}><CircleHelp size={17} /> Hướng dẫn</button>
           <button onClick={() => void copyInvite()}><Share2 size={17} /> {copied ? 'Đã sao chép' : 'Mời bạn bè'}</button>
-          {isHost && <button onClick={() => setSettingsOpen(true)}><Settings2 size={17} /> Cài đặt</button>}
+          {isHost && <button onClick={openSettings}><Settings2 size={17} /> Cài đặt</button>}
           <button className="avatar-button" title={me?.name}>{me?.name?.slice(0, 1).toUpperCase()}</button>
         </div>
       </header>
@@ -986,12 +1008,9 @@ function RoomPage({ roomId }: { roomId: string }) {
               <label><span><strong>Phòng công khai</strong><small>Hiển thị trạng thái public trong phòng.</small></span><span className="toggle"><input name="isPublic" type="checkbox" defaultChecked={meta.isPublic} /><span /></span></label>
               <label><span><strong>Listener thêm bài</strong><small>Không cần Host cấp quyền DJ.</small></span><span className="toggle"><input name="allowListenersToAdd" type="checkbox" defaultChecked={meta.allowListenersToAdd} /><span /></span></label>
               <label><span><strong>Bật chat</strong><small>Cho phép thành viên nhắn tin.</small></span><span className="toggle"><input name="chatEnabled" type="checkbox" defaultChecked={meta.chatEnabled !== false} /><span /></span></label>
-              <label><span><strong>SponsorBlock</strong><small>Tự động bỏ qua các đoạn đã chọn.</small></span><span className="toggle"><input name="sponsorBlockEnabled" type="checkbox" defaultChecked={meta.sponsorBlockEnabled} /><span /></span></label>
+              <label><span><strong>SponsorBlock</strong><small>Tự động bỏ qua các đoạn đã chọn.</small></span><span className="toggle"><input name="sponsorBlockEnabled" type="checkbox" checked={settingsSponsorEnabled} onChange={(event) => { setSettingsSponsorEnabled(event.target.checked); if (!event.target.checked) setSettingsSponsorCategories([]); }} /><span /></span></label>
             </div>
-            <fieldset className="category-settings"><legend>Phân đoạn sẽ bỏ qua</legend>{[
-              ['sponsor', 'Sponsor'], ['selfpromo', 'Tự quảng bá'], ['interaction', 'Kêu gọi tương tác'],
-              ['intro', 'Intro'], ['outro', 'Outro'], ['music_offtopic', 'Ngoài nội dung nhạc'],
-            ].map(([value, label]) => <label key={value}><input type="checkbox" name={`category:${value}`} defaultChecked={meta.sponsorBlockEnabled && meta.sponsorCategories.includes(value)} /><span>{label}</span></label>)}</fieldset>
+            <fieldset className="category-settings" disabled={!settingsSponsorEnabled}><legend>Phân đoạn sẽ bỏ qua</legend>{SPONSOR_CATEGORY_OPTIONS.map(([value, label]) => <label key={value}><input type="checkbox" name={`category:${value}`} checked={settingsSponsorCategories.includes(value)} onChange={(event) => setSettingsSponsorCategories((current) => event.target.checked ? [...current, value] : current.filter((category) => category !== value))} /><span>{label}</span></label>)}</fieldset>
             <div className="ban-settings">
               <div><strong>Danh sách bị cấm</strong><small>{bans.length} thành viên</small></div>
               {bans.length > 0 ? bans.map((ban) => <div className="banned-user" key={ban.uid}><span><strong>{ban.name}</strong><small>{ban.uid.slice(0, 8)}…</small></span><button type="button" onClick={() => void unbanMember(roomId, ban.uid).then(() => showNotice(`Đã bỏ cấm ${ban.name}.`)).catch((cause) => showNotice(cause instanceof Error ? cause.message : 'Không thể bỏ cấm.', 'error'))}>Bỏ cấm</button></div>) : <p>Chưa có thành viên nào bị cấm.</p>}

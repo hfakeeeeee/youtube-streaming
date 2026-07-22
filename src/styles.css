@@ -344,6 +344,8 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 .category-settings input { position: absolute; opacity: 0; }
 .category-settings span { display: block; padding: 7px 9px; border: 1px solid var(--line); border-radius: 999px; color: #858294; background: rgba(255,255,255,.02); font-size: 9px; transition: .2s; }
 .category-settings input:checked + span { border-color: rgba(56,214,232,.23); color: #9ae7ef; background: rgba(56,214,232,.07); }
+.category-settings:disabled { opacity: .5; }
+.category-settings:disabled label { cursor: not-allowed; }
 .ban-settings { margin-top: 18px; padding: 13px; border: 1px solid var(--line); border-radius: 12px; }
 .ban-settings > div:first-child { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; }
 .ban-settings > div:first-child strong { font-size: 11px; }
