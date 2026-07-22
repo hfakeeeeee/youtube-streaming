@@ -17,7 +17,7 @@
         "members": {
           ".read": "auth != null && root.child('rooms').child($roomId).child('members').child(auth.uid).exists()",
           "$uid": {
-            ".write": "auth != null && (root.child('rooms').child($roomId).child('meta').child('hostUid').val() === auth.uid || (auth.uid === $uid && ((!data.exists() && (newData.child('role').val() === 'listener' || root.child('rooms').child($roomId).child('meta').child('hostUid').val() === auth.uid)) || newData.child('role').val() === data.child('role').val())))",
+            ".write": "auth != null && (root.child('rooms').child($roomId).child('meta').child('hostUid').val() === auth.uid || (auth.uid === $uid && (!newData.exists() || (!data.exists() && (newData.child('role').val() === 'listener' || root.child('rooms').child($roomId).child('meta').child('hostUid').val() === auth.uid)) || newData.child('role').val() === data.child('role').val())))",
             ".validate": "!newData.exists() || (newData.hasChildren(['uid','name','role','joinedAt']) && newData.child('uid').val() === $uid && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 32 && (newData.child('role').val() === 'listener' || newData.child('role').val() === 'dj' || (newData.child('role').val() === 'host' && root.child('rooms').child($roomId).child('meta').child('hostUid').val() === $uid)))"
           }
         },
