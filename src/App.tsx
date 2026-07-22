@@ -9,6 +9,7 @@ import {
   Globe2,
   Crown,
   Compass,
+  CircleHelp,
   Headphones,
   History,
   ListMusic,
@@ -19,6 +20,7 @@ import {
   Play,
   Radio,
   Repeat2,
+  Search,
   Settings2,
   Share2,
   ShieldCheck,
@@ -303,6 +305,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [serverOffset, setServerOffset] = useState(0);
   const [notice, setNotice] = useState<{ message: string; tone: 'success' | 'error' } | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [draggedQueueId, setDraggedQueueId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ queueId: string; position: 'before' | 'after' } | null>(null);
   const [undoQueue, setUndoQueue] = useState<{ items: QueueItem[]; label: string } | null>(null);
@@ -373,6 +376,13 @@ function RoomPage({ roomId }: { roomId: string }) {
   }, [isHost, roomId]);
 
   useEffect(() => () => window.clearTimeout(undoTimer.current), []);
+
+  useEffect(() => {
+    if (!helpOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setHelpOpen(false); };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => document.removeEventListener('keydown', closeOnEscape);
+  }, [helpOpen]);
 
   useEffect(() => {
     if (!meta || !uid || !connected || (!isCoHost && me?.role !== 'dj') || members.some((member) => member.uid === meta.hostUid)) return;
@@ -688,6 +698,7 @@ function RoomPage({ roomId }: { roomId: string }) {
         <div className="room-identity"><span>{meta.name}</span><small>{meta.isPublic ? <Globe2 size={12} /> : <LockKeyhole size={12} />} {meta.isPublic ? 'Phòng công khai' : 'Phòng riêng tư'} · {roomId}</small></div>
         <div className="room-actions">
           <span className="online-pill"><i /> {members.length} đang nghe</span>
+          <button onClick={() => setHelpOpen(true)}><CircleHelp size={17} /> Hướng dẫn</button>
           <button onClick={() => void copyInvite()}><Share2 size={17} /> {copied ? 'Đã sao chép' : 'Mời bạn bè'}</button>
           {isHost && <button onClick={() => setSettingsOpen(true)}><Settings2 size={17} /> Cài đặt</button>}
           <button className="avatar-button" title={me?.name}>{me?.name?.slice(0, 1).toUpperCase()}</button>
@@ -857,6 +868,40 @@ function RoomPage({ roomId }: { roomId: string }) {
           )}
         </aside>
       </div>
+
+      {helpOpen && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setHelpOpen(false); }}>
+          <section className="settings-modal help-modal" role="dialog" aria-modal="true" aria-labelledby="help-title">
+            <div className="modal-heading"><div><span>HƯỚNG DẪN SYNCBOX</span><h2 id="help-title">Nghe nhạc cùng nhau</h2></div><button type="button" aria-label="Đóng hướng dẫn" onClick={() => setHelpOpen(false)}><X /></button></div>
+            <div className="help-intro"><CircleHelp size={18} /><p>Bạn đang tham gia với quyền <strong>{isOwner ? 'Owner' : isCoHost ? 'Co-host' : me?.role === 'dj' ? 'DJ' : 'Listener'}</strong>. Các nút bị mờ là tính năng cần quyền cao hơn.</p></div>
+
+            <div className="help-steps">
+              <article><b>1</b><div><strong>Thêm nhạc</strong><span>Dán link YouTube để thêm ngay, hoặc nhập từ khóa rồi nhấn Enter để tìm.</span></div></article>
+              <article><b>2</b><div><strong>Cùng xây queue</strong><span>Bình chọn bài yêu thích; DJ hoặc Host có thể đổi thứ tự và chuyển bài.</span></div></article>
+              <article><b>3</b><div><strong>Nghe đồng bộ</strong><span>Nếu trình duyệt chặn âm thanh, bấm “Bật âm thanh” một lần trên thiết bị.</span></div></article>
+            </div>
+
+            <div className="help-section"><h3>Các nút trong phòng</h3><div className="help-grid">
+              <article><i><Search /></i><div><strong>Tìm kiếm / dán link</strong><span>Search chỉ chạy sau khi Enter; dán link không dùng quota tìm kiếm.</span></div></article>
+              <article><i><Play /></i><div><strong>Play / Pause</strong><span>Owner, Co-host và DJ điều khiển phát nhạc cho cả phòng.</span></div></article>
+              <article><i><SkipForward /></i><div><strong>Chuyển bài</strong><span>Bỏ qua bài hiện tại và phát bài tiếp theo trong queue.</span></div></article>
+              <article><i><Repeat2 /></i><div><strong>Loop</strong><span>Chuyển giữa không lặp, lặp một bài và lặp toàn bộ queue.</span></div></article>
+              <article><i><GripVertical /></i><div><strong>Sắp xếp queue</strong><span>Kéo bài lên hoặc xuống; đường sáng cho biết vị trí sẽ thả.</span></div></article>
+              <article><i><ThumbsUp /></i><div><strong>Bình chọn</strong><span>Mỗi người có một vote để thể hiện bài muốn nghe tiếp.</span></div></article>
+              <article><i><MessageCircle /></i><div><strong>Chat</strong><span>Trò chuyện với mọi người trong tab Chat nếu phòng đang bật chat.</span></div></article>
+              <article><i><Sparkles /></i><div><strong>SponsorBlock</strong><span>Tự bỏ qua sponsor và các phân đoạn cộng đồng đã đánh dấu.</span></div></article>
+            </div></div>
+
+            <div className="help-section"><h3>Quyền trong phòng</h3><div className="role-guide">
+              <article><Headphones /><div><strong>Listener</strong><span>Nghe, chat, vote và thêm bài khi Host cho phép.</span></div></article>
+              <article><Radio /><div><strong>DJ</strong><span>Thêm/sắp xếp queue, play, pause và chuyển bài.</span></div></article>
+              <article><ShieldCheck /><div><strong>Co-host</strong><span>Quản lý phòng, thành viên và cài đặt cùng Owner.</span></div></article>
+              <article><Crown /><div><strong>Owner</strong><span>Toàn quyền, cấp Co-host và chuyển quyền sở hữu.</span></div></article>
+            </div></div>
+            <div className="help-tip"><Sparkles size={15} /><span>Mẹo: sau khi xóa hoặc di chuyển queue, bạn có 7 giây để bấm <strong>Hoàn tác</strong>.</span></div>
+          </section>
+        </div>
+      )}
 
       {settingsOpen && meta && (
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSettingsOpen(false); }}>

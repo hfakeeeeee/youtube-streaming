@@ -353,6 +353,32 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 .modal-actions button { min-height: 41px; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 0 14px; border-radius: 10px; font-size: 11px; font-weight: 600; cursor: pointer; }
 .danger-button { border: 1px solid rgba(251,113,133,.2); color: #fb91a2; background: rgba(251,113,133,.06); }
 .save-settings { border: 0; color: #fff; background: linear-gradient(110deg,#8959f2,#6941dc); }
+.help-modal { width: min(760px,100%); }
+.help-intro { display: flex; align-items: center; gap: 10px; margin: -5px 0 18px; padding: 11px 13px; border: 1px solid rgba(56,214,232,.14); border-radius: 11px; color: #9895a8; background: rgba(56,214,232,.045); }
+.help-intro > svg { flex: none; color: var(--accent); }
+.help-intro p { margin: 0; font-size: 11px; line-height: 1.55; }
+.help-intro strong { color: #d8f7fa; }
+.help-steps { display: grid; grid-template-columns: repeat(3,1fr); gap: 9px; }
+.help-steps article { min-width: 0; display: flex; align-items: flex-start; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.018); }
+.help-steps b { width: 23px; height: 23px; flex: none; display: grid; place-items: center; border-radius: 7px; color: #cfc3ff; background: rgba(139,92,246,.14); font-size: 10px; }
+.help-steps article > div, .help-grid article > div, .role-guide article > div { min-width: 0; display: grid; gap: 4px; }
+.help-steps strong, .help-grid strong, .role-guide strong { font-size: 11px; }
+.help-steps span, .help-grid span, .role-guide span { color: #777486; font-size: 9px; line-height: 1.5; }
+.help-section { margin-top: 20px; }
+.help-section h3 { margin: 0 0 9px; color: #b6b2c3; font: 600 12px 'Space Grotesk'; }
+.help-grid { display: grid; grid-template-columns: repeat(2,1fr); overflow: hidden; border: 1px solid var(--line); border-radius: 12px; }
+.help-grid article { min-width: 0; display: flex; align-items: center; gap: 11px; padding: 11px 12px; border-bottom: 1px solid var(--line); }
+.help-grid article:nth-child(odd) { border-right: 1px solid var(--line); }
+.help-grid article:nth-last-child(-n+2) { border-bottom: 0; }
+.help-grid i { width: 30px; height: 30px; flex: none; display: grid; place-items: center; border-radius: 8px; color: #a990ff; background: rgba(139,92,246,.09); }
+.help-grid i svg { width: 15px; }
+.role-guide { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; }
+.role-guide article { min-width: 0; display: flex; align-items: flex-start; gap: 8px; padding: 11px; border: 1px solid var(--line); border-radius: 11px; background: rgba(255,255,255,.018); }
+.role-guide article > svg { width: 16px; flex: none; color: var(--accent); }
+.role-guide article:last-child > svg { color: #d6b6ff; }
+.help-tip { display: flex; align-items: center; gap: 8px; margin-top: 18px; padding: 10px 12px; border-radius: 10px; color: #8d899c; background: rgba(139,92,246,.065); font-size: 9px; }
+.help-tip svg { flex: none; color: #c3adff; }
+.help-tip strong { color: #cfc6ee; }
 
 /* Readable type scale */
 .room-identity > span { font-size: 16px; }
@@ -479,6 +505,11 @@ button:disabled { opacity: .42; cursor: not-allowed; }
   .timeline-controls .volume-slider, .timeline-controls > svg { display: none; }
   .search-result img { width: 63px; }
   .add-result { width: 34px; padding: 7px; justify-content: center; font-size: 0; }
+  .help-modal { padding: 18px; }
+  .help-steps, .help-grid { grid-template-columns: 1fr; }
+  .help-grid article, .help-grid article:nth-child(odd), .help-grid article:nth-last-child(-n+2) { border-right: 0; border-bottom: 1px solid var(--line); }
+  .help-grid article:last-child { border-bottom: 0; }
+  .role-guide { grid-template-columns: repeat(2,1fr); }
   .panel-body { height: 530px; }
   .side-panel { min-height: 590px; }
 }
