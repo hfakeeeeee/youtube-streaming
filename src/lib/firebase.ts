@@ -81,7 +81,7 @@ export async function createRoom(name: string, displayName: string): Promise<str
     hostUid: user.uid,
     createdAt: Date.now(),
     isPublic: false,
-    sponsorBlockEnabled: true,
+    sponsorBlockEnabled: false,
     sponsorCategories: ['sponsor'],
     loopMode: 'off',
     allowListenersToAdd: false,
