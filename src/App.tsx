@@ -301,6 +301,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [copied, setCopied] = useState(false);
   const [displayPosition, setDisplayPosition] = useState(0);
   const [localVolume, setLocalVolume] = useState(() => Number(localStorage.getItem('syncbox:volume') ?? 80));
+  const [controlBusy, setControlBusy] = useState(false);
   const [connected, setConnected] = useState<boolean | null>(null);
   const [serverOffset, setServerOffset] = useState(0);
   const [notice, setNotice] = useState<{ message: string; tone: 'success' | 'error' } | null>(null);
@@ -428,10 +429,16 @@ function RoomPage({ roomId }: { roomId: string }) {
     if (!player || !playback.video) return;
     const expected = expectedPosition(playback, serverOffset);
     const actual = player.currentTime();
-    if (Math.abs(actual - expected) > 1.5) player.seek(expected);
     player.setVolume(localVolume);
-    if (playback.status === 'playing') player.play();
-    else player.pause();
+    if (playback.status === 'playing') {
+      if (Math.abs(actual - expected) > 1.5) player.seek(expected);
+      player.play();
+    } else {
+      // Pause before correcting the timestamp so the iframe cannot advance
+      // while seekTo is being processed asynchronously.
+      player.pause();
+      if (Math.abs(actual - expected) > 0.25) player.seek(expected);
+    }
   }, [localVolume, playback, serverOffset]);
 
   useEffect(() => {
@@ -554,8 +561,33 @@ function RoomPage({ roomId }: { roomId: string }) {
   }
 
   async function control(status: 'playing' | 'paused') {
-    if (!canControlPlayback) return;
-    await writePlayback(roomId, uid, { status, position: playerRef.current?.currentTime() ?? expectedPosition(playback, serverOffset), reason: 'control' });
+    if (!canControlPlayback || controlBusy) return;
+    const player = playerRef.current;
+    setControlBusy(true);
+    try {
+      if (status === 'paused') {
+        // Freeze locally first; otherwise the video keeps moving during the
+        // Firebase round trip and that later timestamp can leak into Play.
+        player?.pause();
+        const position = player?.currentTime() ?? expectedPosition(playback, serverOffset);
+        setDisplayPosition(position);
+        await writePlayback(roomId, uid, { status, position, reason: 'control' });
+      } else {
+        // A paused room has one canonical timestamp. Do not read a potentially
+        // drifting iframe position when resuming.
+        const position = playback.status === 'paused'
+          ? playback.position
+          : player?.currentTime() ?? expectedPosition(playback, serverOffset);
+        await writePlayback(roomId, uid, { status, position, reason: 'control' });
+        player?.seek(position);
+        player?.play();
+      }
+    } catch (cause) {
+      conformPlayer();
+      showNotice(cause instanceof Error ? cause.message : 'Không thể đồng bộ phát nhạc.', 'error');
+    } finally {
+      setControlBusy(false);
+    }
   }
 
   async function skip(mode: LoopMode = 'off') {
@@ -735,8 +767,8 @@ function RoomPage({ roomId }: { roomId: string }) {
             <div className="track-art">{playback.video ? <img src={playback.video.thumbnail} alt="" /> : <ListMusic />}</div>
             <div className="track-copy"><span>ĐANG PHÁT</span><strong>{playback.video?.title ?? 'Chưa có video'}</strong><small>{playback.video?.channel ?? 'Thêm bài đầu tiên vào queue'}</small></div>
             <div className="room-controls">
-              <button className="control-main" onClick={() => void control(playback.status === 'playing' ? 'paused' : 'playing')} disabled={!canControlPlayback || !playback.video}>
-                {playback.status === 'playing' ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}
+              <button className="control-main" onClick={() => void control(playback.status === 'playing' ? 'paused' : 'playing')} disabled={!canControlPlayback || !playback.video || controlBusy}>
+                {controlBusy ? <LoaderCircle className="spin" /> : playback.status === 'playing' ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}
               </button>
               <button onClick={() => void skip(loopMode === 'one' ? 'off' : loopMode)} disabled={!canControlPlayback || !playback.video}><SkipForward /></button>
               <button
