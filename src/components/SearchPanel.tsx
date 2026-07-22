@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import { Link2, LoaderCircle, Plus, Search, X } from 'lucide-react';
-import { getPlaylist, getVideo, searchVideos } from '../lib/api';
+import { useEffect, useState } from 'react';
+import { Gauge, Link2, LoaderCircle, Plus, Search, X } from 'lucide-react';
+import { getPlaylist, getSearchQuota, getVideo, searchVideos, type SearchQuota } from '../lib/api';
 import { isProbablyUrl, parseYouTubeInput } from '../lib/youtube';
 import type { VideoItem } from '../types';
 
@@ -14,6 +14,11 @@ export function SearchPanel({ canAdd, onAdd }: Props) {
   const [results, setResults] = useState<VideoItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [quota, setQuota] = useState<SearchQuota | null>(null);
+
+  useEffect(() => {
+    void getSearchQuota().then(setQuota);
+  }, []);
 
   async function submit() {
     const value = query.trim();
@@ -40,6 +45,7 @@ export function SearchPanel({ canAdd, onAdd }: Props) {
         throw new Error('Link YouTube không hợp lệ hoặc không được hỗ trợ.');
       } else {
         setResults(await searchVideos(value));
+        setQuota(await getSearchQuota());
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Không thể xử lý yêu cầu.');
@@ -60,6 +66,16 @@ export function SearchPanel({ canAdd, onAdd }: Props) {
 
   return (
     <section className="search-panel">
+      <div className="search-panel-heading">
+        <div>
+          <span>THÊM VÀO PHÒNG</span>
+          <strong>Tìm nhạc hoặc dán link YouTube</strong>
+        </div>
+        <div className="search-meta">
+          {quota && <span className={`quota-pill ${quota.remaining <= 15 ? 'low' : ''}`} title="Số lượt ước tính do Worker ghi nhận"><Gauge size={13} /> ~{quota.remaining}/{quota.limit} lượt tìm</span>}
+          <kbd>Enter để tìm</kbd>
+        </div>
+      </div>
       <div className="search-box">
         {isProbablyUrl(query) ? <Link2 size={19} /> : <Search size={19} />}
         <input
@@ -68,7 +84,7 @@ export function SearchPanel({ canAdd, onAdd }: Props) {
           onKeyDown={(event) => {
             if (event.key === 'Enter') void submit();
           }}
-          placeholder="Dán link YouTube hoặc nhập từ khóa rồi Enter"
+          placeholder="Tên bài hát, nghệ sĩ hoặc link YouTube..."
           aria-label="Tìm hoặc thêm video"
         />
         {query && !busy && <button className="icon-button" onClick={() => { setQuery(''); setResults([]); }}><X size={17} /></button>}
@@ -76,7 +92,7 @@ export function SearchPanel({ canAdd, onAdd }: Props) {
           {busy ? <LoaderCircle className="spin" size={18} /> : 'Enter'}
         </button>
       </div>
-      <p className="search-hint">Link sẽ được thêm ngay. Từ khóa chỉ bắt đầu tìm kiếm sau khi bạn nhấn Enter.</p>
+      <p className="search-hint">Link được thêm trực tiếp · Từ khóa chỉ được tìm sau khi nhấn Enter</p>
       {error && <p className="form-error">{error}</p>}
       {results.length > 0 && (
         <div className="search-results">

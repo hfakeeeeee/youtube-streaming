@@ -1,9 +1,15 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "syncbox-api",
-  "main": "src/index.ts",
-  "compatibility_date": "2026-07-01",
-  "vars": {
-    "ALLOWED_ORIGINS": "http://localhost:5173,https://hfakeeeeee.github.io"
-  }
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "syncbox-api",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-07-01",
+	"vars": {
+		"ALLOWED_ORIGINS": "http://localhost:5173,https://hfakeeeeee.github.io"
+	},
+	"kv_namespaces": [
+		{
+			"binding": "SEARCH_QUOTA",
+			"id": "fb0724959730418d92cd518bbe472196"
+		}
+	]
 }

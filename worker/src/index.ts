@@ -1,6 +1,14 @@
 interface Env {
   YOUTUBE_API_KEY: string;
   ALLOWED_ORIGINS: string;
+  SEARCH_QUOTA?: KVNamespace;
+}
+
+interface SearchQuota {
+  limit: number;
+  used: number;
+  remaining: number;
+  estimated: true;
 }
 
 interface YouTubeSnippet {
@@ -74,12 +82,36 @@ async function youtube(path: string, params: URLSearchParams, env: Env) {
   return data.items ?? [];
 }
 
+const SEARCH_DAILY_LIMIT = 100;
+
+function quotaDate(): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date());
+  const value = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? '';
+  return `${value('year')}-${value('month')}-${value('day')}`;
+}
+
+async function readSearchQuota(env: Env): Promise<SearchQuota | null> {
+  if (!env.SEARCH_QUOTA) return null;
+  const used = Math.max(0, Number(await env.SEARCH_QUOTA.get(`search:${quotaDate()}`)) || 0);
+  return { limit: SEARCH_DAILY_LIMIT, used, remaining: Math.max(0, SEARCH_DAILY_LIMIT - used), estimated: true };
+}
+
+async function recordSearch(env: Env): Promise<void> {
+  if (!env.SEARCH_QUOTA) return;
+  const key = `search:${quotaDate()}`;
+  const used = Math.max(0, Number(await env.SEARCH_QUOTA.get(key)) || 0);
+  await env.SEARCH_QUOTA.put(key, String(used + 1), { expirationTtl: 259200 });
+}
+
 async function search(request: Request, env: Env, url: URL) {
   const query = (url.searchParams.get('q') ?? '').trim().slice(0, 100);
   if (query.length < 2) return json(request, env, { error: 'Từ khóa phải có ít nhất 2 ký tự.' }, 400);
   const items = await youtube('search', new URLSearchParams({
     part: 'snippet', type: 'video', maxResults: '10', safeSearch: 'moderate', q: query,
   }), env);
+  await recordSearch(env).catch(() => undefined);
   return json(request, env, items.map(videoFromItem).filter(Boolean), 200, 600);
 }
 
@@ -144,6 +176,7 @@ export default {
     try {
       let response: Response | undefined;
       if (url.pathname === '/api/health') response = json(request, env, { ok: true });
+      else if (url.pathname === '/api/quota') response = json(request, env, await readSearchQuota(env));
       else if (url.pathname === '/api/search') response = await search(request, env, url);
       const videoMatch = url.pathname.match(/^\/api\/videos\/([\w-]+)$/);
       if (videoMatch) response = await video(request, env, videoMatch[1]);

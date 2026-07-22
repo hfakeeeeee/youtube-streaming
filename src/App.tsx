@@ -345,6 +345,8 @@ function RoomPage({ roomId }: { roomId: string }) {
 
       <div className="room-shell">
         <section className="player-column">
+          <SearchPanel canAdd={Boolean(canAdd)} onAdd={addToQueue} />
+
           <div className="video-stage">
             {playback.video ? (
               <YouTubePlayer
@@ -402,7 +404,6 @@ function RoomPage({ roomId }: { roomId: string }) {
             />
           </div>
 
-          <SearchPanel canAdd={Boolean(canAdd)} onAdd={addToQueue} />
           <div className="room-note"><ShieldCheck size={15} /><span>Video được phát trực tiếp từ YouTube. Syncbox chỉ đồng bộ trạng thái phòng.</span></div>
         </section>
 

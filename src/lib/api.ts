@@ -3,6 +3,13 @@ import { fallbackVideoMetadata } from './youtube';
 
 const baseUrl = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
 
+export interface SearchQuota {
+  limit: number;
+  used: number;
+  remaining: number;
+  estimated: true;
+}
+
 async function getJson<T>(path: string): Promise<T> {
   if (!baseUrl) throw new Error('Chưa cấu hình VITE_API_BASE_URL');
   const response = await fetch(`${baseUrl}${path}`);
@@ -13,6 +20,11 @@ async function getJson<T>(path: string): Promise<T> {
 
 export async function searchVideos(query: string): Promise<VideoItem[]> {
   return getJson<VideoItem[]>(`/api/search?q=${encodeURIComponent(query)}`);
+}
+
+export async function getSearchQuota(): Promise<SearchQuota | null> {
+  if (!baseUrl) return null;
+  return getJson<SearchQuota | null>('/api/quota').catch(() => null);
 }
 
 export async function getVideo(videoId: string): Promise<VideoItem> {

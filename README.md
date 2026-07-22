@@ -141,9 +141,18 @@ cd worker
 npm install
 npx wrangler login
 npx wrangler secret put YOUTUBE_API_KEY
+npx wrangler kv namespace create SEARCH_QUOTA
 ```
 
-Khi được hỏi secret, dán YouTube API key. Sau đó deploy:
+Khi được hỏi secret, dán YouTube API key. Lệnh tạo KV sẽ in ra một `id`. Thêm binding sau vào `worker/wrangler.jsonc` (thay ID bằng giá trị vừa nhận):
+
+```jsonc
+"kv_namespaces": [
+  { "binding": "SEARCH_QUOTA", "id": "YOUR_KV_NAMESPACE_ID" }
+]
+```
+
+KV này lưu bộ đếm tìm kiếm theo ngày để giao diện hiển thị quota ước tính. Sau đó deploy:
 
 ```powershell
 npm run deploy
@@ -166,6 +175,7 @@ Kết quả đúng là `{"ok":true}`. Quay lại thư mục gốc và thay `VITE
 Worker cung cấp:
 
 - `GET /api/search?q=...`
+- `GET /api/quota`
 - `GET /api/videos/:videoId`
 - `GET /api/playlists/:playlistId`
 - `GET /api/sponsor/:videoId?categories=sponsor,intro`
