@@ -1,0 +1,10 @@
+node_modules
+dist
+.env
+.env.local
+worker/.wrangler
+*.log
+*-debug.log
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts

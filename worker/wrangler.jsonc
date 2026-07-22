@@ -1,0 +1,9 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "syncbox-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-01",
+  "vars": {
+    "ALLOWED_ORIGINS": "http://localhost:5173,https://YOUR_GITHUB_USERNAME.github.io"
+  }
+}
