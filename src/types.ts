@@ -15,6 +15,7 @@ export interface QueueItem extends VideoItem {
   addedAt: number;
   addedBy: string;
   addedByName: string;
+  votes?: Record<string, true>;
 }
 
 export interface Member {
@@ -33,6 +34,9 @@ export interface RoomMeta {
   sponsorBlockEnabled: boolean;
   sponsorCategories: string[];
   loopMode?: LoopMode;
+  allowListenersToAdd?: boolean;
+  chatEnabled?: boolean;
+  expiresAt?: number;
 }
 
 export interface PlaybackState {

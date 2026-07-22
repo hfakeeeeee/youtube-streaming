@@ -8,7 +8,6 @@ import {
   push,
   ref,
   remove,
-  runTransaction,
   serverTimestamp,
   set,
   update,
@@ -85,6 +84,9 @@ export async function createRoom(name: string, displayName: string): Promise<str
     sponsorBlockEnabled: true,
     sponsorCategories: ['sponsor'],
     loopMode: 'off',
+    allowListenersToAdd: false,
+    chatEnabled: true,
+    expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
   };
   const playback: PlaybackState = {
     video: null,
@@ -109,7 +111,18 @@ export async function joinRoom(roomIdInput: string, displayName: string): Promis
   const metaSnap = await get(ref(db, `rooms/${roomId}/meta`));
   if (!metaSnap.exists()) throw new Error('Không tìm thấy phòng này.');
   const meta = metaSnap.val() as RoomMeta;
-  const role: Role = meta.hostUid === user.uid ? 'host' : 'listener';
+  if (meta.expiresAt && meta.expiresAt <= Date.now()) {
+    await remove(ref(db, `rooms/${roomId}`)).catch(() => undefined);
+    throw new Error('Phòng đã hết hạn do không hoạt động trong 7 ngày.');
+  }
+  let previousRole: Role = 'listener';
+  try {
+    const existing = await get(ref(db, `rooms/${roomId}/members/${user.uid}`));
+    if (existing.exists()) previousRole = (existing.val() as Member).role;
+  } catch {
+    // New members cannot read the member list until their own record exists.
+  }
+  const role: Role = meta.hostUid === user.uid ? 'host' : previousRole === 'dj' ? 'dj' : 'listener';
   const member: Member = {
     uid: user.uid,
     name: displayName.trim().slice(0, 32) || 'Guest',
@@ -119,8 +132,13 @@ export async function joinRoom(roomIdInput: string, displayName: string): Promis
   };
   const memberRef = ref(db, `rooms/${roomId}/members/${user.uid}`);
   await set(memberRef, member);
-  await onDisconnect(memberRef).remove();
+  await onDisconnect(memberRef).update({ online: false });
   return { roomId, role, roomName: meta.name };
+}
+
+export function setMemberOnline(roomId: string, uid: string, online: boolean): Promise<void> {
+  const { db } = requireFirebase();
+  return update(ref(db, `rooms/${roomId}/members/${uid}`), { online });
 }
 
 export function leaveRoom(roomId: string, uid: string): Promise<void> {
@@ -131,6 +149,16 @@ export function leaveRoom(roomId: string, uid: string): Promise<void> {
 export function subscribeRoom<T>(roomId: string, key: string, callback: (value: T) => void): Unsubscribe {
   const { db } = requireFirebase();
   return onValue(ref(db, `rooms/${roomId}/${key}`), (snapshot) => callback(snapshot.val() as T));
+}
+
+export function subscribeConnection(callback: (connected: boolean) => void): Unsubscribe {
+  const { db } = requireFirebase();
+  return onValue(ref(db, '.info/connected'), (snapshot) => callback(snapshot.val() === true));
+}
+
+export function subscribeServerOffset(callback: (offset: number) => void): Unsubscribe {
+  const { db } = requireFirebase();
+  return onValue(ref(db, '.info/serverTimeOffset'), (snapshot) => callback(Number(snapshot.val()) || 0));
 }
 
 export async function addVideos(roomId: string, videos: VideoItem[], member: Member): Promise<void> {
@@ -154,6 +182,12 @@ export function removeQueueItem(roomId: string, queueId: string): Promise<void> 
   return remove(ref(db, `rooms/${roomId}/queue/${queueId}`));
 }
 
+export function toggleQueueVote(roomId: string, queueId: string, uid: string, voted: boolean): Promise<void> {
+  const { db } = requireFirebase();
+  const voteRef = ref(db, `rooms/${roomId}/queue/${queueId}/votes/${uid}`);
+  return voted ? remove(voteRef) : set(voteRef, true);
+}
+
 export async function writePlayback(
   roomId: string,
   uid: string,
@@ -161,17 +195,35 @@ export async function writePlayback(
 ): Promise<void> {
   const { db } = requireFirebase();
   const playbackRef = ref(db, `rooms/${roomId}/playback`);
-  await runTransaction(playbackRef, (current: PlaybackState | null) => ({
-    video: null,
-    status: 'paused',
-    position: 0,
-    volume: 80,
-    ...(current ?? {}),
+  await update(playbackRef, {
     ...patch,
-    updatedAt: Date.now(),
-    revision: (current?.revision ?? 0) + 1,
+    updatedAt: serverTimestamp(),
+    revision: Date.now(),
     changedBy: uid,
-  }));
+  });
+}
+
+export function clearQueue(roomId: string): Promise<void> {
+  const { db } = requireFirebase();
+  return remove(ref(db, `rooms/${roomId}/queue`));
+}
+
+export function reorderQueue(roomId: string, queueIds: string[]): Promise<void> {
+  const { db } = requireFirebase();
+  const updates: Record<string, number> = {};
+  const base = Date.now();
+  queueIds.forEach((queueId, index) => { updates[`${queueId}/addedAt`] = base + index; });
+  return update(ref(db, `rooms/${roomId}/queue`), updates);
+}
+
+export function transferHost(roomId: string, newHostUid: string): Promise<void> {
+  const { db } = requireFirebase();
+  return update(ref(db, `rooms/${roomId}/meta`), { hostUid: newHostUid });
+}
+
+export function closeRoom(roomId: string): Promise<void> {
+  const { db } = requireFirebase();
+  return remove(ref(db, `rooms/${roomId}`));
 }
 
 export async function advanceQueue(
@@ -230,7 +282,7 @@ export function normalizeQueue(value: Record<string, Omit<QueueItem, 'queueId'>>
 }
 
 export function normalizeMembers(value: Record<string, Member> | null): Member[] {
-  return value ? Object.values(value).sort((a, b) => a.joinedAt - b.joinedAt) : [];
+  return value ? Object.values(value).filter((member) => member.online !== false).sort((a, b) => a.joinedAt - b.joinedAt) : [];
 }
 
 export function normalizeMessages(value: Record<string, Omit<ChatMessage, 'id'>> | null): ChatMessage[] {

@@ -4,10 +4,11 @@
     ".write": false,
     "rooms": {
       "$roomId": {
+        ".write": "auth != null && !newData.exists() && (data.child('meta').child('hostUid').val() === auth.uid || (data.child('meta').child('expiresAt').isNumber() && data.child('meta').child('expiresAt').val() <= now))",
         "meta": {
           ".read": "auth != null",
-          ".write": "auth != null && ((!data.exists() && newData.child('hostUid').val() === auth.uid) || data.child('hostUid').val() === auth.uid)",
-          ".validate": "newData.hasChildren(['name','hostUid','createdAt','sponsorBlockEnabled','sponsorCategories']) && newData.child('name').isString() && newData.child('name').val().length <= 60 && (!newData.child('loopMode').exists() || newData.child('loopMode').val() === 'off' || newData.child('loopMode').val() === 'one' || newData.child('loopMode').val() === 'all')"
+          ".write": "auth != null && ((!data.exists() && newData.child('hostUid').val() === auth.uid) || data.child('hostUid').val() === auth.uid || (newData.child('hostUid').val() === auth.uid && root.child('rooms').child($roomId).child('members').child(data.child('hostUid').val()).child('online').val() != true && root.child('rooms').child($roomId).child('members').child(auth.uid).child('role').val() === 'dj'))",
+          ".validate": "newData.hasChildren(['name','hostUid','createdAt','sponsorBlockEnabled','sponsorCategories']) && newData.child('name').isString() && newData.child('name').val().length <= 60 && (!newData.child('loopMode').exists() || newData.child('loopMode').val() === 'off' || newData.child('loopMode').val() === 'one' || newData.child('loopMode').val() === 'all') && (!newData.child('allowListenersToAdd').exists() || newData.child('allowListenersToAdd').isBoolean()) && (!newData.child('chatEnabled').exists() || newData.child('chatEnabled').isBoolean()) && (!newData.child('expiresAt').exists() || newData.child('expiresAt').isNumber())"
         },
         "playback": {
           ".read": "auth != null && root.child('rooms').child($roomId).child('members').child(auth.uid).exists()",
@@ -18,20 +19,26 @@
           ".read": "auth != null && root.child('rooms').child($roomId).child('members').child(auth.uid).exists()",
           "$uid": {
             ".write": "auth != null && (root.child('rooms').child($roomId).child('meta').child('hostUid').val() === auth.uid || (auth.uid === $uid && (!newData.exists() || (!data.exists() && (newData.child('role').val() === 'listener' || root.child('rooms').child($roomId).child('meta').child('hostUid').val() === auth.uid)) || newData.child('role').val() === data.child('role').val())))",
-            ".validate": "!newData.exists() || (newData.hasChildren(['uid','name','role','joinedAt']) && newData.child('uid').val() === $uid && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 32 && (newData.child('role').val() === 'listener' || newData.child('role').val() === 'dj' || (newData.child('role').val() === 'host' && root.child('rooms').child($roomId).child('meta').child('hostUid').val() === $uid)))"
+            ".validate": "!newData.exists() || (newData.hasChildren(['uid','name','role','joinedAt']) && newData.child('uid').val() === $uid && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 32 && (!newData.child('online').exists() || newData.child('online').isBoolean()) && (newData.child('role').val() === 'listener' || newData.child('role').val() === 'dj' || (newData.child('role').val() === 'host' && root.child('rooms').child($roomId).child('meta').child('hostUid').val() === $uid)))"
           }
         },
         "queue": {
           ".read": "auth != null && root.child('rooms').child($roomId).child('members').child(auth.uid).exists()",
           "$itemId": {
-            ".write": "auth != null && (root.child('rooms').child($roomId).child('members').child(auth.uid).child('role').val() === 'host' || root.child('rooms').child($roomId).child('members').child(auth.uid).child('role').val() === 'dj')",
-            ".validate": "!newData.exists() || (newData.hasChildren(['id','title','thumbnail','addedBy','addedAt']) && newData.child('id').isString() && newData.child('id').val().length === 11 && newData.child('title').isString() && newData.child('title').val().length <= 200)"
+            ".write": "auth != null && (root.child('rooms').child($roomId).child('meta').child('hostUid').val() === auth.uid || root.child('rooms').child($roomId).child('members').child(auth.uid).child('role').val() === 'dj' || (root.child('rooms').child($roomId).child('meta').child('allowListenersToAdd').val() === true && root.child('rooms').child($roomId).child('members').child(auth.uid).exists() && !data.exists() && newData.exists()))",
+            ".validate": "!newData.exists() || (newData.hasChildren(['id','title','thumbnail','addedBy','addedAt']) && newData.child('id').isString() && newData.child('id').val().length === 11 && newData.child('title').isString() && newData.child('title').val().length <= 200)",
+            "votes": {
+              "$uid": {
+                ".write": "auth != null && auth.uid === $uid && root.child('rooms').child($roomId).child('members').child(auth.uid).child('online').val() === true",
+                ".validate": "!newData.exists() || newData.val() === true"
+              }
+            }
           }
         },
         "messages": {
           ".read": "auth != null && root.child('rooms').child($roomId).child('members').child(auth.uid).exists()",
           "$messageId": {
-            ".write": "auth != null && !data.exists() && newData.child('uid').val() === auth.uid && root.child('rooms').child($roomId).child('members').child(auth.uid).exists()",
+            ".write": "auth != null && !data.exists() && newData.child('uid').val() === auth.uid && root.child('rooms').child($roomId).child('members').child(auth.uid).exists() && root.child('rooms').child($roomId).child('meta').child('chatEnabled').val() !== false",
             ".validate": "newData.hasChildren(['uid','name','text','sentAt']) && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 500"
           }
         }

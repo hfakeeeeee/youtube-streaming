@@ -24,7 +24,7 @@ export function SearchPanel({ canAdd, onAdd }: Props) {
     const value = query.trim();
     if (!value || busy) return;
     if (!canAdd) {
-      setError('Bạn cần quyền DJ để thêm bài.');
+      setError('Bạn chưa được phép thêm bài trong phòng này.');
       return;
     }
     setBusy(true);

@@ -1,6 +1,8 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronRight,
+  GripVertical,
+  Globe2,
   Crown,
   Headphones,
   History,
@@ -8,7 +10,6 @@ import {
   LoaderCircle,
   LockKeyhole,
   MessageCircle,
-  MoreHorizontal,
   Pause,
   Play,
   Radio,
@@ -19,9 +20,12 @@ import {
   SkipForward,
   Sparkles,
   Trash2,
+  ThumbsUp,
   Users,
   Volume2,
   WandSparkles,
+  WifiOff,
+  X,
 } from 'lucide-react';
 import { Brand } from './components/Brand';
 import { SearchPanel } from './components/SearchPanel';
@@ -30,6 +34,8 @@ import { getSponsorSegments } from './lib/api';
 import {
   addVideos,
   advanceQueue,
+  clearQueue,
+  closeRoom,
   createRoom,
   ensureUser,
   firebaseConfigured,
@@ -38,8 +44,14 @@ import {
   normalizeMessages,
   normalizeQueue,
   removeQueueItem,
+  reorderQueue,
   sendChat,
+  setMemberOnline,
+  subscribeConnection,
   subscribeRoom,
+  subscribeServerOffset,
+  transferHost,
+  toggleQueueVote,
   updateMemberRole,
   updateRoomMeta,
   writePlayback,
@@ -216,9 +228,9 @@ function HomePage() {
   );
 }
 
-function expectedPosition(playback: PlaybackState) {
+function expectedPosition(playback: PlaybackState, serverOffset = 0) {
   if (playback.status !== 'playing' || typeof playback.updatedAt !== 'number') return playback.position;
-  return Math.max(0, playback.position + (Date.now() - playback.updatedAt) / 1000);
+  return Math.max(0, playback.position + (Date.now() + serverOffset - playback.updatedAt) / 1000);
 }
 
 function RoomPage({ roomId }: { roomId: string }) {
@@ -236,17 +248,31 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [needsActivation, setNeedsActivation] = useState(false);
   const [copied, setCopied] = useState(false);
   const [displayPosition, setDisplayPosition] = useState(0);
+  const [localVolume, setLocalVolume] = useState(() => Number(localStorage.getItem('syncbox:volume') ?? 80));
+  const [connected, setConnected] = useState<boolean | null>(null);
+  const [serverOffset, setServerOffset] = useState(0);
+  const [notice, setNotice] = useState<{ message: string; tone: 'success' | 'error' } | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [draggedQueueId, setDraggedQueueId] = useState<string | null>(null);
   const playerRef = useRef<PlayerHandle>(null);
   const lastSponsorSkip = useRef('');
 
   const me = useMemo(() => members.find((member) => member.uid === uid), [members, uid]);
-  const isHost = me?.role === 'host';
-  const canAdd = me?.role === 'host' || me?.role === 'dj';
+  const isHost = Boolean(uid && meta?.hostUid === uid);
+  const canManageQueue = isHost || me?.role === 'dj';
+  const canAdd = canManageQueue || Boolean(meta?.allowListenersToAdd);
   const sponsorCategoryKey = meta?.sponsorCategories.join(',') ?? 'sponsor';
   const loopMode: LoopMode = meta?.loopMode ?? 'off';
+  const queueDuration = useMemo(() => queue.reduce((total, item) => total + (item.duration ?? 0), 0), [queue]);
+
+  function showNotice(message: string, tone: 'success' | 'error' = 'success') {
+    setNotice({ message, tone });
+    window.setTimeout(() => setNotice(null), 2600);
+  }
 
   useEffect(() => {
     let active = true;
+    let joinedUid = '';
     const unsubscribes: Array<() => void> = [];
     async function connect() {
       try {
@@ -255,9 +281,12 @@ function RoomPage({ roomId }: { roomId: string }) {
         const user = await ensureUser();
         if (!active) return;
         setUid(user.uid);
+        joinedUid = user.uid;
         const joined = await joinRoom(roomId, displayName);
         saveRecentRoom(joined.roomId, joined.roomName, joined.role);
         unsubscribes.push(
+          subscribeConnection(setConnected),
+          subscribeServerOffset(setServerOffset),
           subscribeRoom<RoomMeta | null>(roomId, 'meta', setMeta),
           subscribeRoom<PlaybackState | null>(roomId, 'playback', (value) => setPlayback(value ?? EMPTY_PLAYBACK)),
           subscribeRoom<Record<string, Omit<QueueItem, 'queueId'>> | null>(roomId, 'queue', (value) => setQueue(normalizeQueue(value))),
@@ -274,8 +303,38 @@ function RoomPage({ roomId }: { roomId: string }) {
     return () => {
       active = false;
       unsubscribes.forEach((unsubscribe) => unsubscribe());
+      if (joinedUid) void setMemberOnline(roomId, joinedUid, false).catch(() => undefined);
     };
   }, [roomId]);
+
+  useEffect(() => {
+    if (!meta || !uid || !connected || me?.role !== 'dj' || members.some((member) => member.uid === meta.hostUid)) return;
+    const timer = window.setTimeout(() => {
+      void transferHost(roomId, uid).then(() => setNotice({ message: 'Bạn đã tiếp quản Host vì Host cũ mất kết nối.', tone: 'success' })).catch(() => undefined);
+    }, 15000);
+    return () => window.clearTimeout(timer);
+  }, [connected, me?.role, members, meta, roomId, uid]);
+
+  useEffect(() => {
+    if (!connected || !uid) return;
+    const displayName = localStorage.getItem('syncbox:name') || 'Guest';
+    void joinRoom(roomId, displayName).catch((cause) => {
+      setNotice({ message: cause instanceof Error ? cause.message : 'Không thể kết nối lại phòng.', tone: 'error' });
+    });
+  }, [connected, roomId, uid]);
+
+  useEffect(() => {
+    if (!isHost || !me) return;
+    const changes: Array<Promise<void>> = [];
+    if (me.role !== 'host') changes.push(updateMemberRole(roomId, uid, 'host'));
+    members.filter((member) => member.uid !== uid && member.role === 'host').forEach((member) => {
+      changes.push(updateMemberRole(roomId, member.uid, 'listener'));
+    });
+    if (meta?.expiresAt && meta.expiresAt < Date.now() + 6 * 24 * 60 * 60 * 1000) {
+      changes.push(updateRoomMeta(roomId, { expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000 }));
+    }
+    void Promise.all(changes).catch(() => undefined);
+  }, [isHost, me, members, meta?.expiresAt, roomId, uid]);
 
   useEffect(() => {
     if (!playback.video?.id || !meta?.sponsorBlockEnabled) {
@@ -290,13 +349,13 @@ function RoomPage({ roomId }: { roomId: string }) {
   const conformPlayer = useCallback(() => {
     const player = playerRef.current;
     if (!player || !playback.video) return;
-    const expected = expectedPosition(playback);
+    const expected = expectedPosition(playback, serverOffset);
     const actual = player.currentTime();
     if (Math.abs(actual - expected) > 1.5) player.seek(expected);
-    player.setVolume(playback.volume ?? 80);
+    player.setVolume(localVolume);
     if (playback.status === 'playing') player.play();
     else player.pause();
-  }, [playback]);
+  }, [localVolume, playback, serverOffset]);
 
   useEffect(() => {
     const timer = window.setTimeout(conformPlayer, 250);
@@ -305,17 +364,17 @@ function RoomPage({ roomId }: { roomId: string }) {
 
   useEffect(() => {
     const timer = window.setInterval(() => {
-      setDisplayPosition(playerRef.current?.currentTime() ?? expectedPosition(playback));
+      setDisplayPosition(playerRef.current?.currentTime() ?? expectedPosition(playback, serverOffset));
     }, 500);
     return () => window.clearInterval(timer);
-  }, [playback]);
+  }, [playback, serverOffset]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
       if (!playback.video || playback.status !== 'playing') return;
       const player = playerRef.current;
       if (!player) return;
-      const expected = expectedPosition(playback);
+      const expected = expectedPosition(playback, serverOffset);
       if (Math.abs(player.currentTime() - expected) > 2.5) player.seek(expected);
 
       if (!isHost || !meta?.sponsorBlockEnabled) return;
@@ -328,19 +387,38 @@ function RoomPage({ roomId }: { roomId: string }) {
       void writePlayback(roomId, uid, { position: match.segment[1], status: 'playing', reason: 'sponsorblock' });
     }, 500);
     return () => window.clearInterval(timer);
-  }, [isHost, meta?.sponsorBlockEnabled, playback, roomId, segments, uid]);
+  }, [isHost, meta?.sponsorBlockEnabled, playback, roomId, segments, serverOffset, uid]);
 
   async function addToQueue(videos: VideoItem[]) {
     if (!me) return;
-    await addVideos(roomId, videos, me);
-    if (!playback.video && videos[0]) {
-      await writePlayback(roomId, uid, { video: videos[0], status: 'playing', position: 0, reason: 'queue' });
+    const existingIds = new Set(queue.map((item) => item.id));
+    const unique = videos.filter((video, index) => !existingIds.has(video.id) && videos.findIndex((item) => item.id === video.id) === index);
+    if (!unique.length) {
+      showNotice('Video này đã có trong queue.', 'error');
+      return;
     }
+    await addVideos(roomId, unique, me);
+    if (!playback.video && unique[0]) {
+      await writePlayback(roomId, uid, { video: unique[0], status: 'playing', position: 0, reason: 'queue' });
+    }
+    showNotice(`Đã thêm ${unique.length} video vào queue.`);
+  }
+
+  async function moveQueueItem(targetQueueId: string) {
+    if (!canManageQueue || !draggedQueueId || draggedQueueId === targetQueueId) return;
+    const next = [...queue];
+    const from = next.findIndex((item) => item.queueId === draggedQueueId);
+    const to = next.findIndex((item) => item.queueId === targetQueueId);
+    if (from < 0 || to < 0) return;
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    setDraggedQueueId(null);
+    await reorderQueue(roomId, next.map((item) => item.queueId));
   }
 
   async function control(status: 'playing' | 'paused') {
     if (!isHost) return;
-    await writePlayback(roomId, uid, { status, position: playerRef.current?.currentTime() ?? expectedPosition(playback), reason: 'control' });
+    await writePlayback(roomId, uid, { status, position: playerRef.current?.currentTime() ?? expectedPosition(playback, serverOffset), reason: 'control' });
   }
 
   async function skip(mode: LoopMode = 'off') {
@@ -360,10 +438,10 @@ function RoomPage({ roomId }: { roomId: string }) {
     await writePlayback(roomId, uid, { position, status: playback.status, reason: 'control' });
   }
 
-  async function setRoomVolume(volume: number) {
-    if (!isHost) return;
+  function setDeviceVolume(volume: number) {
+    setLocalVolume(volume);
+    localStorage.setItem('syncbox:volume', String(volume));
     playerRef.current?.setVolume(volume);
-    await writePlayback(roomId, uid, { volume, position: playerRef.current?.currentTime() ?? expectedPosition(playback), reason: 'control' });
   }
 
   async function playQueueItem(item: QueueItem) {
@@ -373,7 +451,7 @@ function RoomPage({ roomId }: { roomId: string }) {
 
   async function submitChat(event: FormEvent) {
     event.preventDefault();
-    if (!chatText.trim() || !me) return;
+    if (!chatText.trim() || !me || meta?.chatEnabled === false) return;
     const text = chatText;
     setChatText('');
     await sendChat(roomId, uid, me.name, text);
@@ -382,7 +460,51 @@ function RoomPage({ roomId }: { roomId: string }) {
   async function copyInvite() {
     await navigator.clipboard.writeText(window.location.href);
     setCopied(true);
+    showNotice('Đã sao chép link mời.');
     window.setTimeout(() => setCopied(false), 1600);
+  }
+
+  async function saveSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!isHost) return;
+    const form = new FormData(event.currentTarget);
+    const categories = ['sponsor', 'selfpromo', 'interaction', 'intro', 'outro', 'music_offtopic'].filter((category) => form.get(`category:${category}`) === 'on');
+    try {
+      await updateRoomMeta(roomId, {
+        name: String(form.get('name') ?? '').trim().slice(0, 60) || meta?.name || 'Syncbox room',
+        isPublic: form.get('isPublic') === 'on',
+        allowListenersToAdd: form.get('allowListenersToAdd') === 'on',
+        chatEnabled: form.get('chatEnabled') === 'on',
+        sponsorBlockEnabled: form.get('sponsorBlockEnabled') === 'on',
+        sponsorCategories: categories.length ? categories : ['sponsor'],
+        expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
+      });
+      setSettingsOpen(false);
+      showNotice('Đã lưu cài đặt phòng.');
+    } catch (cause) {
+      showNotice(cause instanceof Error ? cause.message : 'Không thể lưu cài đặt.', 'error');
+    }
+  }
+
+  async function handOffHost(member: Member) {
+    if (!isHost || !window.confirm(`Chuyển quyền Host cho ${member.name}?`)) return;
+    try {
+      await transferHost(roomId, member.uid);
+      showNotice(`${member.name} hiện là Host mới.`);
+    } catch (cause) {
+      showNotice(cause instanceof Error ? cause.message : 'Không thể chuyển Host.', 'error');
+    }
+  }
+
+  async function handleCloseRoom() {
+    if (!isHost || !window.confirm('Đóng phòng và xóa toàn bộ queue, chat, thành viên? Thao tác này không thể hoàn tác.')) return;
+    try {
+      await closeRoom(roomId);
+      localStorage.setItem(RECENT_ROOMS_KEY, JSON.stringify(loadRecentRooms().filter((room) => room.roomId !== roomId)));
+      window.location.hash = '#/';
+    } catch (cause) {
+      showNotice(cause instanceof Error ? cause.message : 'Không thể đóng phòng.', 'error');
+    }
   }
 
   if (loading) return <div className="center-screen"><LoaderCircle className="spin" /><span>Đang vào phòng {roomId}…</span></div>;
@@ -394,13 +516,17 @@ function RoomPage({ roomId }: { roomId: string }) {
     <main className="room-page">
       <header className="room-header">
         <Brand />
-        <div className="room-identity"><span>{meta.name}</span><small><LockKeyhole size={12} /> Phòng riêng tư · {roomId}</small></div>
+        <div className="room-identity"><span>{meta.name}</span><small>{meta.isPublic ? <Globe2 size={12} /> : <LockKeyhole size={12} />} {meta.isPublic ? 'Phòng công khai' : 'Phòng riêng tư'} · {roomId}</small></div>
         <div className="room-actions">
           <span className="online-pill"><i /> {members.length} đang nghe</span>
           <button onClick={() => void copyInvite()}><Share2 size={17} /> {copied ? 'Đã sao chép' : 'Mời bạn bè'}</button>
+          {isHost && <button onClick={() => setSettingsOpen(true)}><Settings2 size={17} /> Cài đặt</button>}
           <button className="avatar-button" title={me?.name}>{me?.name?.slice(0, 1).toUpperCase()}</button>
         </div>
       </header>
+
+      {connected === false && <div className="connection-banner"><WifiOff size={15} /> Mất kết nối — đang thử kết nối lại…</div>}
+      {notice && <div className={`toast ${notice.tone}`}><span>{notice.message}</span><button onClick={() => setNotice(null)}><X size={14} /></button></div>}
 
       <div className="room-shell">
         <section className="player-column">
@@ -411,7 +537,7 @@ function RoomPage({ roomId }: { roomId: string }) {
               <YouTubePlayer
                 ref={playerRef}
                 videoId={playback.video.id}
-                startSeconds={expectedPosition(playback)}
+                startSeconds={expectedPosition(playback, serverOffset)}
                 onReady={conformPlayer}
                 onEnded={() => { if (isHost) void skip(loopMode); }}
                 onAutoplayBlocked={() => setNeedsActivation(true)}
@@ -463,13 +589,12 @@ function RoomPage({ roomId }: { roomId: string }) {
             <Volume2 size={15} />
             <input
               className="volume-slider"
-              aria-label="Âm lượng phòng"
+              aria-label="Âm lượng thiết bị"
               type="range"
               min="0"
               max="100"
-              value={playback.volume ?? 80}
-              disabled={!isHost}
-              onChange={(event) => void setRoomVolume(Number(event.target.value))}
+              value={localVolume}
+              onChange={(event) => setDeviceVolume(Number(event.target.value))}
             />
           </div>
 
@@ -485,16 +610,31 @@ function RoomPage({ roomId }: { roomId: string }) {
 
           {activePanel === 'queue' && (
             <div className="panel-body queue-panel">
-              <div className="panel-title"><div><strong>Tiếp theo</strong><span>{queue.length} video trong hàng đợi</span></div><MoreHorizontal /></div>
+              <div className="panel-title">
+                <div><strong>Tiếp theo</strong><span>{queue.length} video {queueDuration > 0 ? `· ${formatDuration(queueDuration)}` : ''}</span></div>
+                {canManageQueue && queue.length > 0 && <button className="clear-queue" onClick={() => void clearQueue(roomId).then(() => showNotice('Đã xóa queue.')).catch((cause) => showNotice(cause instanceof Error ? cause.message : 'Không thể xóa queue.', 'error'))}><Trash2 size={14} /> Xóa hết</button>}
+              </div>
               <div className="queue-list">
                 {queue.map((item, index) => (
-                  <article className={`queue-item ${playback.video?.id === item.id ? 'current' : ''}`} key={item.queueId}>
+                  <article
+                    className={`queue-item ${playback.video?.id === item.id ? 'current' : ''} ${draggedQueueId === item.queueId ? 'dragging' : ''}`}
+                    key={item.queueId}
+                    draggable={Boolean(canManageQueue)}
+                    onDragStart={() => setDraggedQueueId(item.queueId)}
+                    onDragEnd={() => setDraggedQueueId(null)}
+                    onDragOver={(event) => { if (canManageQueue) event.preventDefault(); }}
+                    onDrop={() => void moveQueueItem(item.queueId)}
+                  >
                     <button className="queue-thumb" disabled={!isHost} onClick={() => void playQueueItem(item)}>
                       <img src={item.thumbnail} alt="" />
                       <span>{playback.video?.id === item.id ? <Volume2 size={16} /> : index + 1}</span>
                     </button>
                     <div><strong>{item.title}</strong><span>{item.channel}</span><small>thêm bởi {item.addedByName} {item.duration ? `· ${formatDuration(item.duration)}` : ''}</small></div>
-                    {isHost && <button className="queue-remove" onClick={() => void removeQueueItem(roomId, item.queueId)}><Trash2 size={15} /></button>}
+                    <div className="queue-item-actions">
+                      <button className={`queue-vote ${item.votes?.[uid] ? 'active' : ''}`} title="Bình chọn bài này" onClick={() => void toggleQueueVote(roomId, item.queueId, uid, Boolean(item.votes?.[uid])).catch((cause) => showNotice(cause instanceof Error ? cause.message : 'Không thể bình chọn.', 'error'))}><ThumbsUp size={13} /><span>{Object.keys(item.votes ?? {}).length || ''}</span></button>
+                      {canManageQueue && <GripVertical className="queue-grip" size={15} />}
+                      {isHost && <button className="queue-remove" onClick={() => void removeQueueItem(roomId, item.queueId)}><Trash2 size={15} /></button>}
+                    </div>
                   </article>
                 ))}
                 {queue.length === 0 && <div className="empty-list"><ListMusic /><span>Chưa có bài nào</span><small>Thêm link hoặc tìm kiếm để xây queue.</small></div>}
@@ -512,9 +652,9 @@ function RoomPage({ roomId }: { roomId: string }) {
             <div className="panel-body chat-panel">
               <div className="messages">
                 {messages.map((message) => <div className={`message ${message.uid === uid ? 'mine' : ''}`} key={message.id}><span>{message.name}</span><p>{message.text}</p></div>)}
-                {messages.length === 0 && <div className="empty-list"><MessageCircle /><span>Cuộc trò chuyện bắt đầu ở đây</span></div>}
+                {messages.length === 0 && <div className="empty-list"><MessageCircle /><span>{meta.chatEnabled === false ? 'Chat đang được Host tắt' : 'Cuộc trò chuyện bắt đầu ở đây'}</span></div>}
               </div>
-              <form className="chat-form" onSubmit={submitChat}><input value={chatText} onChange={(event) => setChatText(event.target.value)} placeholder="Nhắn cho mọi người…" maxLength={500} /><button><ChevronRight /></button></form>
+              <form className="chat-form" onSubmit={submitChat}><input value={chatText} onChange={(event) => setChatText(event.target.value)} placeholder={meta.chatEnabled === false ? 'Chat đã bị tắt' : 'Nhắn cho mọi người…'} disabled={meta.chatEnabled === false} maxLength={500} /><button disabled={meta.chatEnabled === false}><ChevronRight /></button></form>
             </div>
           )}
 
@@ -524,9 +664,12 @@ function RoomPage({ roomId }: { roomId: string }) {
               {members.map((member) => (
                 <article className="member" key={member.uid}>
                   <div className="member-avatar">{member.name.slice(0, 1).toUpperCase()}</div>
-                  <div><strong>{member.name} {member.uid === uid && '(bạn)'}</strong><span>{member.role === 'host' ? 'Host' : member.role === 'dj' ? 'DJ' : 'Listener'}</span></div>
-                  {member.role === 'host' ? <Crown className="host-crown" size={18} /> : isHost ? (
-                    <select value={member.role} onChange={(event) => void updateMemberRole(roomId, member.uid, event.target.value as Role)}><option value="listener">Listener</option><option value="dj">DJ</option></select>
+                  <div><strong>{member.name} {member.uid === uid && '(bạn)'}</strong><span>{member.uid === meta.hostUid ? 'Host' : member.role === 'dj' ? 'DJ' : 'Listener'}</span></div>
+                  {member.uid === meta.hostUid ? <Crown className="host-crown" size={18} /> : isHost ? (
+                    <div className="member-admin">
+                      <button title="Chuyển quyền Host" onClick={() => void handOffHost(member)}><Crown size={14} /></button>
+                      <select value={member.role === 'host' ? 'listener' : member.role} onChange={(event) => void updateMemberRole(roomId, member.uid, event.target.value as Role).then(() => showNotice(`Đã cập nhật quyền của ${member.name}.`)).catch((cause) => showNotice(cause instanceof Error ? cause.message : 'Không thể cập nhật quyền.', 'error'))}><option value="listener">Listener</option><option value="dj">DJ</option></select>
+                    </div>
                   ) : <i className="member-online" />}
                 </article>
               ))}
@@ -534,6 +677,26 @@ function RoomPage({ roomId }: { roomId: string }) {
           )}
         </aside>
       </div>
+
+      {settingsOpen && meta && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSettingsOpen(false); }}>
+          <form className="settings-modal" onSubmit={saveSettings}>
+            <div className="modal-heading"><div><span>CÀI ĐẶT PHÒNG</span><h2>{meta.name}</h2></div><button type="button" onClick={() => setSettingsOpen(false)}><X /></button></div>
+            <label className="settings-field">Tên phòng<input name="name" defaultValue={meta.name} maxLength={60} /></label>
+            <div className="settings-group">
+              <label><span><strong>Phòng công khai</strong><small>Hiển thị trạng thái public trong phòng.</small></span><span className="toggle"><input name="isPublic" type="checkbox" defaultChecked={meta.isPublic} /><span /></span></label>
+              <label><span><strong>Listener thêm bài</strong><small>Không cần Host cấp quyền DJ.</small></span><span className="toggle"><input name="allowListenersToAdd" type="checkbox" defaultChecked={meta.allowListenersToAdd} /><span /></span></label>
+              <label><span><strong>Bật chat</strong><small>Cho phép thành viên nhắn tin.</small></span><span className="toggle"><input name="chatEnabled" type="checkbox" defaultChecked={meta.chatEnabled !== false} /><span /></span></label>
+              <label><span><strong>SponsorBlock</strong><small>Tự động bỏ qua các đoạn đã chọn.</small></span><span className="toggle"><input name="sponsorBlockEnabled" type="checkbox" defaultChecked={meta.sponsorBlockEnabled} /><span /></span></label>
+            </div>
+            <fieldset className="category-settings"><legend>Phân đoạn sẽ bỏ qua</legend>{[
+              ['sponsor', 'Sponsor'], ['selfpromo', 'Tự quảng bá'], ['interaction', 'Kêu gọi tương tác'],
+              ['intro', 'Intro'], ['outro', 'Outro'], ['music_offtopic', 'Ngoài nội dung nhạc'],
+            ].map(([value, label]) => <label key={value}><input type="checkbox" name={`category:${value}`} defaultChecked={meta.sponsorCategories.includes(value)} /><span>{label}</span></label>)}</fieldset>
+            <div className="modal-actions"><button type="button" className="danger-button" onClick={() => void handleCloseRoom()}><Trash2 size={15} /> Đóng phòng</button><button className="save-settings">Lưu thay đổi</button></div>
+          </form>
+        </div>
+      )}
     </main>
   );
 }
