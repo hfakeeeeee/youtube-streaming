@@ -7,7 +7,7 @@
         "meta": {
           ".read": "auth != null",
           ".write": "auth != null && ((!data.exists() && newData.child('hostUid').val() === auth.uid) || data.child('hostUid').val() === auth.uid)",
-          ".validate": "newData.hasChildren(['name','hostUid','createdAt','sponsorBlockEnabled','sponsorCategories']) && newData.child('name').isString() && newData.child('name').val().length <= 60"
+          ".validate": "newData.hasChildren(['name','hostUid','createdAt','sponsorBlockEnabled','sponsorCategories']) && newData.child('name').isString() && newData.child('name').val().length <= 60 && (!newData.child('loopMode').exists() || newData.child('loopMode').val() === 'off' || newData.child('loopMode').val() === 'one' || newData.child('loopMode').val() === 'all')"
         },
         "playback": {
           ".read": "auth != null && root.child('rooms').child($roomId).child('members').child(auth.uid).exists()",

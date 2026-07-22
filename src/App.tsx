@@ -12,6 +12,7 @@ import {
   Pause,
   Play,
   Radio,
+  Repeat2,
   Settings2,
   Share2,
   ShieldCheck,
@@ -44,7 +45,7 @@ import {
   writePlayback,
 } from './lib/firebase';
 import { formatDuration } from './lib/youtube';
-import type { ChatMessage, Member, PlaybackState, QueueItem, Role, RoomMeta, SponsorSegment, VideoItem } from './types';
+import type { ChatMessage, LoopMode, Member, PlaybackState, QueueItem, Role, RoomMeta, SponsorSegment, VideoItem } from './types';
 
 const EMPTY_PLAYBACK: PlaybackState = {
   video: null,
@@ -242,6 +243,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   const isHost = me?.role === 'host';
   const canAdd = me?.role === 'host' || me?.role === 'dj';
   const sponsorCategoryKey = meta?.sponsorCategories.join(',') ?? 'sponsor';
+  const loopMode: LoopMode = meta?.loopMode ?? 'off';
 
   useEffect(() => {
     let active = true;
@@ -341,9 +343,15 @@ function RoomPage({ roomId }: { roomId: string }) {
     await writePlayback(roomId, uid, { status, position: playerRef.current?.currentTime() ?? expectedPosition(playback), reason: 'control' });
   }
 
-  async function skip() {
+  async function skip(mode: LoopMode = 'off') {
     if (!isHost) return;
-    await advanceQueue(roomId, uid, queue, playback.video?.id, playback.volume);
+    await advanceQueue(roomId, uid, queue, playback.video?.id, playback.volume, mode);
+  }
+
+  async function cycleLoopMode() {
+    if (!isHost) return;
+    const next: LoopMode = loopMode === 'off' ? 'one' : loopMode === 'one' ? 'all' : 'off';
+    await updateRoomMeta(roomId, { loopMode: next });
   }
 
   async function seekTo(position: number) {
@@ -405,7 +413,7 @@ function RoomPage({ roomId }: { roomId: string }) {
                 videoId={playback.video.id}
                 startSeconds={expectedPosition(playback)}
                 onReady={conformPlayer}
-                onEnded={() => { if (isHost) void skip(); }}
+                onEnded={() => { if (isHost) void skip(loopMode); }}
                 onAutoplayBlocked={() => setNeedsActivation(true)}
               />
             ) : (
@@ -424,7 +432,17 @@ function RoomPage({ roomId }: { roomId: string }) {
               <button className="control-main" onClick={() => void control(playback.status === 'playing' ? 'paused' : 'playing')} disabled={!isHost || !playback.video}>
                 {playback.status === 'playing' ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}
               </button>
-              <button onClick={() => void skip()} disabled={!isHost || !playback.video}><SkipForward /></button>
+              <button onClick={() => void skip(loopMode === 'one' ? 'off' : loopMode)} disabled={!isHost || !playback.video}><SkipForward /></button>
+              <button
+                className={`loop-button ${loopMode !== 'off' ? 'active' : ''}`}
+                onClick={() => void cycleLoopMode()}
+                disabled={!isHost}
+                aria-label={loopMode === 'off' ? 'Bật lặp một bài' : loopMode === 'one' ? 'Bật lặp queue' : 'Tắt lặp'}
+                title={loopMode === 'off' ? 'Không lặp' : loopMode === 'one' ? 'Lặp một bài' : 'Lặp queue'}
+              >
+                <Repeat2 />
+                {loopMode === 'one' && <span>1</span>}
+              </button>
             </div>
           </div>
           <div className="timeline-controls">

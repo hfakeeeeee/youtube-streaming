@@ -182,6 +182,9 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 .room-controls svg { width: 18px; }
 .room-controls .control-main { width: 47px; height: 47px; color: #fff; background: linear-gradient(145deg,#9867fa,#6740d7); box-shadow: 0 10px 28px rgba(113,69,220,.26); transition: transform .2s; }
 .room-controls .control-main:hover:not(:disabled) { background: linear-gradient(145deg,#a476ff,#7048df); transform: scale(1.045); }
+.room-controls .loop-button { position: relative; color: #817e91; transition: color .2s, background .2s; }
+.room-controls .loop-button.active { color: var(--accent); background: rgba(56,214,232,.07); }
+.room-controls .loop-button span { position: absolute; inset: 8px 0 auto; color: currentColor; font-size: 7px; font-weight: 800; line-height: 1; }
 .timeline-controls { height: 38px; display: flex; align-items: center; gap: 9px; padding: 0 3px; color: #747184; font-size: 8px; }
 .timeline-controls input[type='range'] { min-width: 0; flex: 1; height: 3px; accent-color: var(--primary-bright); cursor: pointer; }
 .timeline-controls input:disabled { cursor: not-allowed; }

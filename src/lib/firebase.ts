@@ -15,7 +15,7 @@ import {
   type Database,
   type Unsubscribe,
 } from 'firebase/database';
-import type { ChatMessage, Member, PlaybackState, QueueItem, Role, RoomMeta, VideoItem } from '../types';
+import type { ChatMessage, LoopMode, Member, PlaybackState, QueueItem, Role, RoomMeta, VideoItem } from '../types';
 
 const config = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -84,6 +84,7 @@ export async function createRoom(name: string, displayName: string): Promise<str
     isPublic: false,
     sponsorBlockEnabled: true,
     sponsorCategories: ['sponsor'],
+    loopMode: 'off',
   };
   const playback: PlaybackState = {
     video: null,
@@ -179,17 +180,22 @@ export async function advanceQueue(
   queue: QueueItem[],
   currentVideoId?: string,
   volume = 80,
+  loopMode: LoopMode = 'off',
 ): Promise<void> {
   const { db } = requireFirebase();
   const foundIndex = currentVideoId ? queue.findIndex((item) => item.id === currentVideoId) : -1;
   const currentIndex = foundIndex >= 0 ? foundIndex : 0;
   const current = queue[currentIndex];
-  const next = queue.find((_, index) => index !== currentIndex);
+  const next = queue.length > 1 ? queue[(currentIndex + 1) % queue.length] : undefined;
   const updates: Record<string, unknown> = {};
-  if (current) updates[`rooms/${roomId}/queue/${current.queueId}`] = null;
+  if (current && loopMode === 'off') updates[`rooms/${roomId}/queue/${current.queueId}`] = null;
+  if (current && loopMode === 'all' && next) {
+    updates[`rooms/${roomId}/queue/${current.queueId}/addedAt`] = Date.now();
+  }
+  const target = loopMode === 'one' || (loopMode === 'all' && !next) ? current : next;
   updates[`rooms/${roomId}/playback`] = {
-    video: next ? { id: next.id, title: next.title, channel: next.channel ?? '', thumbnail: next.thumbnail, duration: next.duration ?? 0 } : null,
-    status: next ? 'playing' : 'paused',
+    video: target ? { id: target.id, title: target.title, channel: target.channel ?? '', thumbnail: target.thumbnail, duration: target.duration ?? 0 } : null,
+    status: target ? 'playing' : 'paused',
     position: 0,
     volume,
     updatedAt: serverTimestamp() as unknown as number,

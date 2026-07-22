@@ -1,5 +1,6 @@
 export type Role = 'host' | 'dj' | 'listener';
 export type PlaybackStatus = 'playing' | 'paused';
+export type LoopMode = 'off' | 'one' | 'all';
 
 export interface VideoItem {
   id: string;
@@ -31,6 +32,7 @@ export interface RoomMeta {
   isPublic: boolean;
   sponsorBlockEnabled: boolean;
   sponsorCategories: string[];
+  loopMode?: LoopMode;
 }
 
 export interface PlaybackState {
