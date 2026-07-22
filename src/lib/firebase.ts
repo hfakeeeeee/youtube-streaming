@@ -305,7 +305,9 @@ export async function advanceQueue(
   const target = loopMode === 'one' || (loopMode === 'all' && !next) ? current : next;
   updates[`rooms/${roomId}/playback`] = {
     video: target ? { id: target.id, title: target.title, channel: target.channel ?? '', thumbnail: target.thumbnail, duration: target.duration ?? 0 } : null,
-    status: target ? 'playing' : 'paused',
+    // Keep the room clock frozen at zero while the initiating client cues the
+    // next iframe. It switches to playing only after YouTube reports CUED.
+    status: 'paused',
     position: 0,
     volume,
     updatedAt: serverTimestamp() as unknown as number,

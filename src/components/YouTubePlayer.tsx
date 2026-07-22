@@ -22,6 +22,7 @@ interface Props {
   videoId?: string;
   startSeconds?: number;
   onReady?: () => void;
+  onCued?: (videoId: string) => void;
   onEnded?: () => void;
   onAutoplayBlocked?: () => void;
 }
@@ -60,16 +61,16 @@ function buildEmbedUrl(videoId: string | undefined, startSeconds: number): strin
 }
 
 export const YouTubePlayer = forwardRef<PlayerHandle, Props>(function YouTubePlayer(
-  { videoId, startSeconds = 0, onReady, onEnded, onAutoplayBlocked },
+  { videoId, startSeconds = 0, onReady, onCued, onEnded, onAutoplayBlocked },
   forwardedRef,
 ) {
   const mountRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<any>(null);
   const iframeId = useRef(`syncbox-youtube-${Math.random().toString(36).slice(2)}`).current;
-  const latestCallbacks = useRef({ onReady, onEnded, onAutoplayBlocked });
+  const latestCallbacks = useRef({ onReady, onCued, onEnded, onAutoplayBlocked });
   const initialVideo = useRef({ videoId, startSeconds });
   const [ready, setReady] = useState(false);
-  latestCallbacks.current = { onReady, onEnded, onAutoplayBlocked };
+  latestCallbacks.current = { onReady, onCued, onEnded, onAutoplayBlocked };
 
   useImperativeHandle(forwardedRef, () => ({
     play: () => playerRef.current?.playVideo?.(),
@@ -114,8 +115,14 @@ export const YouTubePlayer = forwardRef<PlayerHandle, Props>(function YouTubePla
             if (disposed) return;
             setReady(true);
             latestCallbacks.current.onReady?.();
+            const cuedId = String(playerRef.current?.getVideoData?.()?.video_id ?? '');
+            if (cuedId) latestCallbacks.current.onCued?.(cuedId);
           },
           onStateChange: (event: { data: number }) => {
+            if (event.data === YT.PlayerState.CUED) {
+              const cuedId = String(playerRef.current?.getVideoData?.()?.video_id ?? '');
+              if (cuedId) latestCallbacks.current.onCued?.(cuedId);
+            }
             if (event.data === YT.PlayerState.ENDED) latestCallbacks.current.onEnded?.();
           },
           onAutoplayBlocked: () => latestCallbacks.current.onAutoplayBlocked?.(),

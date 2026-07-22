@@ -327,6 +327,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   const playerRef = useRef<PlayerHandle>(null);
   const videoStageRef = useRef<HTMLDivElement>(null);
   const lastSponsorSkip = useRef('');
+  const pendingQueueStart = useRef<string | null>(null);
   const undoTimer = useRef<number | undefined>(undefined);
 
   const me = useMemo(() => members.find((member) => member.uid === uid), [members, uid]);
@@ -511,7 +512,8 @@ function RoomPage({ roomId }: { roomId: string }) {
     }
     await addVideos(roomId, unique, me);
     if (!playback.video && unique[0]) {
-      await writePlayback(roomId, uid, { video: unique[0], status: 'playing', position: 0, reason: 'queue' });
+      pendingQueueStart.current = unique[0].id;
+      await writePlayback(roomId, uid, { video: unique[0], status: 'paused', position: 0, reason: 'queue' });
     }
     showNotice(`Đã thêm ${unique.length} video vào queue.`);
   }
@@ -594,6 +596,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     setControlBusy(true);
     try {
       if (status === 'paused') {
+        pendingQueueStart.current = null;
         // Freeze locally first; otherwise the video keeps moving during the
         // Firebase round trip and that later timestamp can leak into Play.
         player?.pause();
@@ -620,7 +623,19 @@ function RoomPage({ roomId }: { roomId: string }) {
 
   async function skip(mode: LoopMode = 'off') {
     if (!canControlPlayback) return;
+    const foundIndex = playback.video ? queue.findIndex((item) => item.id === playback.video?.id) : -1;
+    const currentIndex = foundIndex >= 0 ? foundIndex : 0;
+    const current = queue[currentIndex];
+    const next = queue.length > 1 ? queue[(currentIndex + 1) % queue.length] : undefined;
+    const target = mode === 'one' || (mode === 'all' && !next) ? current : next;
+    pendingQueueStart.current = target?.id ?? null;
     await advanceQueue(roomId, uid, queue, playback.video?.id, playback.volume, mode);
+    if (target && target.id === playback.video?.id) {
+      pendingQueueStart.current = null;
+      playerRef.current?.seek(0);
+      await writePlayback(roomId, uid, { status: 'playing', position: 0, reason: 'queue' });
+      playerRef.current?.play();
+    }
   }
 
   async function cycleLoopMode() {
@@ -665,8 +680,23 @@ function RoomPage({ roomId }: { roomId: string }) {
 
   async function playQueueItem(item: QueueItem) {
     if (!canControlPlayback) return;
-    await writePlayback(roomId, uid, { video: item, status: 'playing', position: 0, reason: 'queue' });
+    pendingQueueStart.current = item.id;
+    await writePlayback(roomId, uid, { video: item, status: 'paused', position: 0, reason: 'queue' });
+    if (item.id === playback.video?.id) {
+      pendingQueueStart.current = null;
+      playerRef.current?.seek(0);
+      await writePlayback(roomId, uid, { status: 'playing', position: 0, reason: 'queue' });
+      playerRef.current?.play();
+    }
   }
+
+  const handlePlayerCued = useCallback((videoId: string) => {
+    if (pendingQueueStart.current !== videoId) return;
+    pendingQueueStart.current = null;
+    void writePlayback(roomId, uid, { status: 'playing', position: 0, reason: 'queue' }).catch((cause) => {
+      showNotice(cause instanceof Error ? cause.message : 'Không thể bắt đầu video.', 'error');
+    });
+  }, [roomId, uid]);
 
   async function submitChat(event: FormEvent) {
     event.preventDefault();
@@ -812,6 +842,7 @@ function RoomPage({ roomId }: { roomId: string }) {
                 videoId={playback.video.id}
                 startSeconds={expectedPosition(playback, serverOffset)}
                 onReady={conformPlayer}
+                onCued={handlePlayerCued}
                 onEnded={() => { if (isOwner) void skip(loopMode); }}
                 onAutoplayBlocked={() => setNeedsActivation(true)}
               />
