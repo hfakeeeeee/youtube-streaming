@@ -206,8 +206,9 @@ VITE_API_BASE_URL
 
 1. Repository **Settings** > **Pages**.
 2. Trong **Build and deployment**, tại **Source**, chọn **GitHub Actions**.
-3. Push source code lên nhánh `main`.
-4. Mở tab **Actions**, chọn workflow **Deploy GitHub Pages** và chờ cả `build` lẫn `deploy` chuyển màu xanh.
+3. Push source code lên GitHub. Push sẽ không tự động deploy.
+4. Mở tab **Actions** > chọn workflow **Deploy GitHub Pages** > **Run workflow** > chọn nhánh cần deploy > **Run workflow**.
+5. Chờ cả `build` lẫn `deploy` chuyển màu xanh.
 5. Website sẽ có dạng `https://YOUR_GITHUB_USERNAME.github.io/REPOSITORY_NAME/`.
 
 Workflow đã nằm tại `.github/workflows/deploy-pages.yml`. Vite tự đặt base path theo tên repository. App dùng URL `/#/room/ABC123`, nên refresh room không bị GitHub Pages trả về 404.
