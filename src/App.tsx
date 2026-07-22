@@ -260,6 +260,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   const me = useMemo(() => members.find((member) => member.uid === uid), [members, uid]);
   const isHost = Boolean(uid && meta?.hostUid === uid);
   const canManageQueue = isHost || me?.role === 'dj';
+  const canControlPlayback = isHost || me?.role === 'dj';
   const canAdd = canManageQueue || Boolean(meta?.allowListenersToAdd);
   const sponsorCategoryKey = meta?.sponsorCategories.join(',') ?? 'sponsor';
   const loopMode: LoopMode = meta?.loopMode ?? 'off';
@@ -417,12 +418,12 @@ function RoomPage({ roomId }: { roomId: string }) {
   }
 
   async function control(status: 'playing' | 'paused') {
-    if (!isHost) return;
+    if (!canControlPlayback) return;
     await writePlayback(roomId, uid, { status, position: playerRef.current?.currentTime() ?? expectedPosition(playback, serverOffset), reason: 'control' });
   }
 
   async function skip(mode: LoopMode = 'off') {
-    if (!isHost) return;
+    if (!canControlPlayback) return;
     await advanceQueue(roomId, uid, queue, playback.video?.id, playback.volume, mode);
   }
 
@@ -445,7 +446,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   }
 
   async function playQueueItem(item: QueueItem) {
-    if (!isHost) return;
+    if (!canControlPlayback) return;
     await writePlayback(roomId, uid, { video: item, status: 'playing', position: 0, reason: 'queue' });
   }
 
@@ -555,10 +556,10 @@ function RoomPage({ roomId }: { roomId: string }) {
             <div className="track-art">{playback.video ? <img src={playback.video.thumbnail} alt="" /> : <ListMusic />}</div>
             <div className="track-copy"><span>ĐANG PHÁT</span><strong>{playback.video?.title ?? 'Chưa có video'}</strong><small>{playback.video?.channel ?? 'Thêm bài đầu tiên vào queue'}</small></div>
             <div className="room-controls">
-              <button className="control-main" onClick={() => void control(playback.status === 'playing' ? 'paused' : 'playing')} disabled={!isHost || !playback.video}>
+              <button className="control-main" onClick={() => void control(playback.status === 'playing' ? 'paused' : 'playing')} disabled={!canControlPlayback || !playback.video}>
                 {playback.status === 'playing' ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}
               </button>
-              <button onClick={() => void skip(loopMode === 'one' ? 'off' : loopMode)} disabled={!isHost || !playback.video}><SkipForward /></button>
+              <button onClick={() => void skip(loopMode === 'one' ? 'off' : loopMode)} disabled={!canControlPlayback || !playback.video}><SkipForward /></button>
               <button
                 className={`loop-button ${loopMode !== 'off' ? 'active' : ''}`}
                 onClick={() => void cycleLoopMode()}
@@ -625,7 +626,7 @@ function RoomPage({ roomId }: { roomId: string }) {
                     onDragOver={(event) => { if (canManageQueue) event.preventDefault(); }}
                     onDrop={() => void moveQueueItem(item.queueId)}
                   >
-                    <button className="queue-thumb" disabled={!isHost} onClick={() => void playQueueItem(item)}>
+                    <button className="queue-thumb" disabled={!canControlPlayback} onClick={() => void playQueueItem(item)}>
                       <img src={item.thumbnail} alt="" />
                       <span>{playback.video?.id === item.id ? <Volume2 size={16} /> : index + 1}</span>
                     </button>

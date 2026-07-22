@@ -12,7 +12,7 @@
         },
         "playback": {
           ".read": "auth != null && root.child('rooms').child($roomId).child('members').child(auth.uid).exists()",
-          ".write": "auth != null && root.child('rooms').child($roomId).child('meta').child('hostUid').val() === auth.uid",
+          ".write": "auth != null && (root.child('rooms').child($roomId).child('meta').child('hostUid').val() === auth.uid || root.child('rooms').child($roomId).child('members').child(auth.uid).child('role').val() === 'dj')",
           ".validate": "newData.hasChildren(['status','position','volume','updatedAt','revision','changedBy']) && (newData.child('status').val() === 'playing' || newData.child('status').val() === 'paused') && newData.child('position').isNumber() && newData.child('position').val() >= 0 && newData.child('volume').isNumber() && newData.child('volume').val() >= 0 && newData.child('volume').val() <= 100"
         },
         "members": {
