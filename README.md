@@ -8,7 +8,7 @@ Phòng nghe YouTube cộng tác theo thời gian thực, kết hợp room/queue 
 - Host, DJ và Listener với quyền riêng biệt.
 - Dán video, Shorts, playlist hoặc link `youtu.be` để thêm vào queue.
 - Chỉ tìm kiếm YouTube sau khi người dùng nhấn Enter.
-- Đồng bộ play, pause, seek, skip và video hiện tại qua Firebase.
+- Đồng bộ play, pause, seek, skip và volume qua Firebase.
 - Chat, presence và quản lý vai trò trong phòng.
 - SponsorBlock là thiết lập chung của room để mọi thiết bị cùng bỏ qua một đoạn.
 - Giao diện responsive và hash routing tương thích GitHub Pages.
@@ -22,44 +22,146 @@ Phòng nghe YouTube cộng tác theo thời gian thực, kết hợp room/queue 
 - Player: YouTube IFrame API với `youtube-nocookie.com`.
 - Sponsor data: SponsorBlock API.
 
-## 1. Chạy frontend
+## 1. Tạo và cấu hình Firebase
 
-```bash
-npm install
-Copy-Item .env.example .env.local
-npm run dev
+### 1.1. Tạo project và đăng ký Web app
+
+1. Mở [Firebase Console](https://console.firebase.google.com/) và chọn **Create a project**.
+2. Google Analytics không bắt buộc cho Syncbox; có thể tắt.
+3. Trong trang **Project overview**, bấm biểu tượng Web `</>`.
+4. Đặt nickname, ví dụ `syncbox-web`, rồi bấm **Register app**.
+5. Firebase hiển thị object `firebaseConfig`. Giữ trang này để lấy các giá trị:
+
+```js
+const firebaseConfig = {
+  apiKey: "...",
+  authDomain: "...",
+  projectId: "...",
+  appId: "..."
+};
 ```
 
-Điền các biến trong `.env.local` từ Firebase Console > Project settings > Your apps > Web app.
+Nếu đã đóng màn hình này: bấm biểu tượng bánh răng cạnh **Project Overview** > **Project settings** > tab **General** > kéo xuống **Your apps** > chọn Web app > **SDK setup and configuration** > **Config**.
 
-## 2. Cấu hình Firebase
+### 1.2. Bật Anonymous Authentication
 
-1. Tạo Firebase project và Web app.
-2. Authentication > Sign-in method > bật **Anonymous**.
-3. Authentication > Settings > Authorized domains, thêm `YOUR_GITHUB_USERNAME.github.io`.
-4. Realtime Database > Create database.
-5. Sao chép `.firebaserc.example` thành `.firebaserc` và thay project ID.
-6. Cài Firebase CLI và deploy rules:
+1. Firebase Console > **Build** > **Authentication**.
+2. Bấm **Get started** nếu đây là lần đầu.
+3. Tab **Sign-in method** > chọn **Anonymous** > bật **Enable** > **Save**.
+4. Authentication > **Settings** > **Authorized domains**:
+   - Thêm `localhost` để chạy local nếu chưa có.
+   - Thêm `YOUR_GITHUB_USERNAME.github.io` để chạy trên GitHub Pages.
 
-```bash
+Chỉ nhập hostname, không nhập `https://` và không nhập tên repository.
+
+### 1.3. Tạo Realtime Database và lấy `VITE_FIREBASE_DATABASE_URL`
+
+1. Firebase Console > **Build** > **Realtime Database**.
+2. Bấm **Create Database**.
+3. Chọn location gần người dùng của bạn.
+4. Chọn **Locked mode**; rules của dự án sẽ được deploy ở bước sau.
+5. Sau khi tạo xong, ở đầu tab **Data** sẽ có URL database, ví dụ:
+
+```text
+https://syncbox-demo-default-rtdb.asia-southeast1.firebasedatabase.app
+```
+
+Hoặc database tại `us-central1` có thể có dạng:
+
+```text
+https://syncbox-demo-default-rtdb.firebaseio.com
+```
+
+Sao chép nguyên URL, gồm cả `https://`. Đây chính là `VITE_FIREBASE_DATABASE_URL`.
+
+### 1.4. Tạo `.env.local`
+
+Từ thư mục gốc của dự án, chạy PowerShell:
+
+```powershell
+Copy-Item .env.example .env.local
+```
+
+Điền `.env.local` như sau:
+
+```dotenv
+VITE_FIREBASE_API_KEY=giá_trị_apiKey
+VITE_FIREBASE_AUTH_DOMAIN=giá_trị_authDomain
+VITE_FIREBASE_DATABASE_URL=https://ten-database.region.firebasedatabase.app
+VITE_FIREBASE_PROJECT_ID=giá_trị_projectId
+VITE_FIREBASE_APP_ID=giá_trị_appId
+VITE_API_BASE_URL=http://localhost:8787
+```
+
+Không thêm dấu nháy. `.env.local` đã nằm trong `.gitignore`.
+
+### 1.5. Deploy Firebase Security Rules
+
+Chạy tại thư mục gốc:
+
+```powershell
 npm install -g firebase-tools
 firebase login
+Copy-Item .firebaserc.example .firebaserc
+firebase use --add
+```
+
+Khi `firebase use --add` hỏi, chọn Firebase project vừa tạo và đặt alias là `default`. Sau đó:
+
+```powershell
 firebase deploy --only database
 ```
 
-Không dùng Test Mode khi đưa website lên public. `database.rules.json` đã giới hạn thao tác theo thành viên và vai trò.
+Lệnh này deploy file `database.rules.json`. Không để database public bằng Test Mode.
 
-## 3. Deploy Cloudflare Worker
+## 2. Tạo YouTube API key
 
-```bash
+1. Mở [Google Cloud Console](https://console.cloud.google.com/).
+2. Chọn đúng Google Cloud project được Firebase tạo, hoặc tạo một project riêng.
+3. **APIs & Services** > **Library**.
+4. Tìm **YouTube Data API v3** > **Enable**.
+5. **APIs & Services** > **Credentials** > **Create credentials** > **API key**.
+6. Mở API key vừa tạo > **API restrictions** > **Restrict key** > chỉ chọn **YouTube Data API v3** > **Save**.
+
+Không đặt key này trong biến `VITE_...`; key chỉ được lưu trong Cloudflare Worker.
+
+## 3. Cấu hình và deploy Cloudflare Worker
+
+1. Tạo tài khoản Cloudflare nếu chưa có.
+2. Mở `worker/wrangler.jsonc` và sửa:
+
+```json
+"ALLOWED_ORIGINS": "http://localhost:5173,https://YOUR_GITHUB_USERNAME.github.io"
+```
+
+3. Chạy:
+
+```powershell
 cd worker
 npm install
 npx wrangler login
 npx wrangler secret put YOUTUBE_API_KEY
+```
+
+Khi được hỏi secret, dán YouTube API key. Sau đó deploy:
+
+```powershell
 npm run deploy
 ```
 
-Trước khi deploy, sửa `ALLOWED_ORIGINS` trong `worker/wrangler.jsonc` thành domain GitHub Pages thực tế. API key được tạo trong Google Cloud Console sau khi bật YouTube Data API v3.
+Cloudflare sẽ trả về URL dạng:
+
+```text
+https://syncbox-api.YOUR_SUBDOMAIN.workers.dev
+```
+
+Kiểm tra:
+
+```text
+https://syncbox-api.YOUR_SUBDOMAIN.workers.dev/api/health
+```
+
+Kết quả đúng là `{"ok":true}`. Quay lại thư mục gốc và thay `VITE_API_BASE_URL` trong `.env.local` bằng URL Worker này.
 
 Worker cung cấp:
 
@@ -68,20 +170,51 @@ Worker cung cấp:
 - `GET /api/playlists/:playlistId`
 - `GET /api/sponsor/:videoId?categories=sponsor,intro`
 
-## 4. Deploy GitHub Pages
+## 4. Chạy local
 
-Trong repository Settings:
+Mở terminal tại thư mục gốc:
 
-1. Pages > Source chọn **GitHub Actions**.
-2. Actions secrets and variables > Actions, thêm các secret trong `.env.example`.
-3. `VITE_API_BASE_URL` là URL `https://syncbox-api.<account>.workers.dev`.
-4. Push lên nhánh `main` hoặc chạy workflow **Deploy GitHub Pages** thủ công.
+```powershell
+npm install
+npm run dev
+```
 
-Vite tự đặt base path theo tên repository trong GitHub Actions. App dùng URL dạng `/#/room/ABC123`, nên refresh trực tiếp không bị lỗi 404.
+Mở `http://localhost:5173`. Để search và SponsorBlock hoạt động local, `VITE_API_BASE_URL` phải trỏ tới Worker đã deploy, hoặc chạy `npm run dev` trong thư mục `worker` và dùng `http://localhost:8787`.
 
-## Kiểm tra
+## 5. Deploy GitHub Pages
 
-```bash
+### 5.1. Thêm GitHub Actions secrets
+
+Trong GitHub repository:
+
+1. **Settings** > **Secrets and variables** > **Actions**.
+2. Chọn **New repository secret**.
+3. Tạo đúng 6 secret sau, dùng giá trị từ `.env.local`:
+
+```text
+VITE_FIREBASE_API_KEY
+VITE_FIREBASE_AUTH_DOMAIN
+VITE_FIREBASE_DATABASE_URL
+VITE_FIREBASE_PROJECT_ID
+VITE_FIREBASE_APP_ID
+VITE_API_BASE_URL
+```
+
+`VITE_API_BASE_URL` phải là URL Worker đã deploy, không phải `localhost`.
+
+### 5.2. Bật GitHub Pages
+
+1. Repository **Settings** > **Pages**.
+2. Trong **Build and deployment**, tại **Source**, chọn **GitHub Actions**.
+3. Push source code lên nhánh `main`.
+4. Mở tab **Actions**, chọn workflow **Deploy GitHub Pages** và chờ cả `build` lẫn `deploy` chuyển màu xanh.
+5. Website sẽ có dạng `https://YOUR_GITHUB_USERNAME.github.io/REPOSITORY_NAME/`.
+
+Workflow đã nằm tại `.github/workflows/deploy-pages.yml`. Vite tự đặt base path theo tên repository. App dùng URL `/#/room/ABC123`, nên refresh room không bị GitHub Pages trả về 404.
+
+## 6. Kiểm tra dự án
+
+```powershell
 npm test
 npm run lint
 npm run build
@@ -89,9 +222,17 @@ cd worker
 npm run typecheck
 ```
 
+## Lỗi setup thường gặp
+
+- **Firebase chưa được cấu hình:** có ít nhất một biến `VITE_FIREBASE_...` đang trống; restart `npm run dev` sau khi sửa `.env.local`.
+- **auth/unauthorized-domain:** thêm `localhost` hoặc `YOUR_GITHUB_USERNAME.github.io` vào Firebase Authentication > Settings > Authorized domains.
+- **PERMISSION_DENIED:** Anonymous Auth chưa bật hoặc chưa chạy `firebase deploy --only database`.
+- **Search báo lỗi/CORS:** kiểm tra `VITE_API_BASE_URL` và `ALLOWED_ORIGINS`, rồi deploy Worker lại.
+- **Search báo quota:** YouTube Search API đã hết quota trong ngày; dán link video vẫn tiếp tục hoạt động.
+- **Video không phát:** video có thể giới hạn tuổi, theo vùng hoặc đã tắt embedding.
+
 ## Lưu ý
 
 - YouTube IFrame có thể vẫn hiển thị quảng cáo do YouTube phân phối.
-- Một số video giới hạn tuổi hoặc tắt embedding sẽ không phát được.
 - SponsorBlock là dữ liệu cộng đồng và có thể không tồn tại cho mọi video.
-- YouTube Search API có quota; Worker chỉ gọi search khi người dùng nhấn Enter và trả cache header cho kết quả.
+- Firebase config phía frontend không phải server secret; quyền truy cập dữ liệu được bảo vệ bằng Authentication và Database Rules.
