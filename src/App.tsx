@@ -459,6 +459,9 @@ function RoomPage({ roomId }: { roomId: string }) {
     const expected = expectedPosition(playback, serverOffset);
     const actual = player.currentTime();
     player.setVolume(localVolume);
+    // The client that selected the track is deliberately pre-rolling its local
+    // iframe while Firebase remains paused at zero. Do not pause that pre-roll.
+    if (pendingQueueStart.current === playback.video.id && playback.reason === 'queue') return;
     if (playback.status === 'playing') {
       if (Math.abs(actual - expected) > 1.5) player.seek(expected);
       player.play();
@@ -631,9 +634,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     pendingQueueStart.current = target?.id ?? null;
     await advanceQueue(roomId, uid, queue, playback.video?.id, playback.volume, mode);
     if (target && target.id === playback.video?.id) {
-      pendingQueueStart.current = null;
       playerRef.current?.seek(0);
-      await writePlayback(roomId, uid, { status: 'playing', position: 0, reason: 'queue' });
       playerRef.current?.play();
     }
   }
@@ -688,9 +689,7 @@ function RoomPage({ roomId }: { roomId: string }) {
       }
       await writePlayback(roomId, uid, { video: item, status: 'paused', position: 0, reason: 'queue' });
       if (item.id === playback.video?.id) {
-        pendingQueueStart.current = null;
         playerRef.current?.seek(0);
-        await writePlayback(roomId, uid, { status: 'playing', position: 0, reason: 'queue' });
         playerRef.current?.play();
       }
     } catch (cause) {
@@ -701,7 +700,17 @@ function RoomPage({ roomId }: { roomId: string }) {
 
   const handlePlayerCued = useCallback((videoId: string) => {
     if (pendingQueueStart.current !== videoId) return;
+    // Start only this local iframe first. The shared room clock must remain
+    // paused until YouTube confirms that media is actually playing.
+    playerRef.current?.seek(0);
+    playerRef.current?.play();
+  }, []);
+
+  const handlePlayerPlaying = useCallback((videoId: string) => {
+    if (pendingQueueStart.current !== videoId) return;
     pendingQueueStart.current = null;
+    // Rebase at zero at the moment playback truly starts. CUED only means the
+    // metadata is ready and may still be followed by several seconds of buffer.
     void writePlayback(roomId, uid, { status: 'playing', position: 0, reason: 'queue' }).catch((cause) => {
       showNotice(cause instanceof Error ? cause.message : 'Không thể bắt đầu video.', 'error');
     });
@@ -852,6 +861,7 @@ function RoomPage({ roomId }: { roomId: string }) {
                 startSeconds={expectedPosition(playback, serverOffset)}
                 onReady={conformPlayer}
                 onCued={handlePlayerCued}
+                onPlaying={handlePlayerPlaying}
                 onEnded={() => { if (isOwner) void skip(loopMode); }}
                 onAutoplayBlocked={() => setNeedsActivation(true)}
               />
