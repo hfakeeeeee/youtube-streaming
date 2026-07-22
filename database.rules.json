@@ -2,6 +2,13 @@
   "rules": {
     ".read": false,
     ".write": false,
+    "roomExpirations": {
+      ".read": false,
+      "$roomId": {
+        ".write": "auth != null && ((!data.exists() && newData.isNumber() && newData.val() > now) || root.child('rooms').child($roomId).child('meta').child('hostUid').val() === auth.uid || root.child('rooms').child($roomId).child('meta').child('coHosts').child(auth.uid).val() === true || (data.isNumber() && data.val() <= now && !newData.exists()))",
+        ".validate": "!newData.exists() || (newData.isNumber() && newData.val() > now)"
+      }
+    },
     "publicRooms": {
       ".read": "auth != null",
       "$roomId": {
@@ -10,6 +17,7 @@
       }
     },
     "rooms": {
+      ".indexOn": ["meta/expiresAt"],
       "$roomId": {
         ".write": "auth != null && !newData.exists() && (data.child('meta').child('hostUid').val() === auth.uid || (data.child('meta').child('expiresAt').isNumber() && data.child('meta').child('expiresAt').val() <= now))",
         "meta": {
@@ -41,7 +49,7 @@
           ".read": "auth != null && root.child('rooms').child($roomId).child('members').child(auth.uid).exists()",
           ".write": "auth != null && !newData.exists() && (root.child('rooms').child($roomId).child('meta').child('hostUid').val() === auth.uid || root.child('rooms').child($roomId).child('meta').child('coHosts').child(auth.uid).val() === true || root.child('rooms').child($roomId).child('members').child(auth.uid).child('role').val() === 'dj')",
           "$itemId": {
-            ".write": "auth != null && (((root.child('rooms').child($roomId).child('meta').child('hostUid').val() === auth.uid || root.child('rooms').child($roomId).child('meta').child('coHosts').child(auth.uid).val() === true || root.child('rooms').child($roomId).child('members').child(auth.uid).child('role').val() === 'dj') && (data.exists() || !root.child('rooms').child($roomId).child('members').child(auth.uid).child('lastQueueAt').exists() || now - root.child('rooms').child($roomId).child('members').child(auth.uid).child('lastQueueAt').val() >= 1000)) || (root.child('rooms').child($roomId).child('meta').child('allowListenersToAdd').val() === true && root.child('rooms').child($roomId).child('members').child(auth.uid).exists() && !data.exists() && newData.exists() && (!root.child('rooms').child($roomId).child('members').child(auth.uid).child('lastQueueAt').exists() || now - root.child('rooms').child($roomId).child('members').child(auth.uid).child('lastQueueAt').val() >= 1000)))",
+            ".write": "auth != null && (root.child('rooms').child($roomId).child('meta').child('hostUid').val() === auth.uid || root.child('rooms').child($roomId).child('meta').child('coHosts').child(auth.uid).val() === true || root.child('rooms').child($roomId).child('members').child(auth.uid).child('role').val() === 'dj' || (root.child('rooms').child($roomId).child('meta').child('allowListenersToAdd').val() === true && root.child('rooms').child($roomId).child('members').child(auth.uid).exists() && !data.exists() && newData.exists() && (!root.child('rooms').child($roomId).child('members').child(auth.uid).child('lastQueueAt').exists() || now - root.child('rooms').child($roomId).child('members').child(auth.uid).child('lastQueueAt').val() >= 1000)))",
             ".validate": "!newData.exists() || (newData.hasChildren(['id','title','thumbnail','addedBy','addedAt']) && newData.child('id').isString() && newData.child('id').val().length === 11 && newData.child('title').isString() && newData.child('title').val().length <= 200)",
             "votes": {
               "$uid": {

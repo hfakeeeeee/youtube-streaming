@@ -2,6 +2,9 @@ interface Env {
   YOUTUBE_API_KEY: string;
   ALLOWED_ORIGINS: string;
   SEARCH_QUOTA?: KVNamespace;
+  FIREBASE_DATABASE_URL?: string;
+  FIREBASE_CLIENT_EMAIL?: string;
+  FIREBASE_PRIVATE_KEY?: string;
 }
 
 interface SearchQuota {
@@ -83,6 +86,107 @@ async function youtube(path: string, params: URLSearchParams, env: Env) {
 }
 
 const SEARCH_DAILY_LIMIT = 100;
+const FIREBASE_OAUTH_SCOPE = 'https://www.googleapis.com/auth/firebase.database https://www.googleapis.com/auth/userinfo.email';
+
+function base64Url(value: string | ArrayBuffer): string {
+  const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : new Uint8Array(value);
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function privateKeyBytes(pem: string): ArrayBuffer {
+  const content = pem
+    .replace(/\\n/g, '\n')
+    .replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----/g, '')
+    .replace(/\s/g, '');
+  const binary = atob(content);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes.buffer;
+}
+
+async function firebaseAccessToken(env: Env): Promise<string> {
+  if (!env.FIREBASE_CLIENT_EMAIL || !env.FIREBASE_PRIVATE_KEY) {
+    throw new Error('Firebase cleanup credentials are not configured');
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const header = base64Url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
+  const payload = base64Url(JSON.stringify({
+    iss: env.FIREBASE_CLIENT_EMAIL,
+    sub: env.FIREBASE_CLIENT_EMAIL,
+    aud: 'https://oauth2.googleapis.com/token',
+    scope: FIREBASE_OAUTH_SCOPE,
+    iat: now,
+    exp: now + 3600,
+  }));
+  const unsigned = `${header}.${payload}`;
+  const privateKey = await crypto.subtle.importKey(
+    'pkcs8',
+    privateKeyBytes(env.FIREBASE_PRIVATE_KEY),
+    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const signature = await crypto.subtle.sign(
+    'RSASSA-PKCS1-v1_5',
+    privateKey,
+    new TextEncoder().encode(unsigned),
+  );
+  const assertion = `${unsigned}.${base64Url(signature)}`;
+  const response = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion,
+    }),
+  });
+  const data = await response.json() as { access_token?: string; error_description?: string };
+  if (!response.ok || !data.access_token) throw new Error(data.error_description ?? 'Could not authenticate Firebase cleanup');
+  return data.access_token;
+}
+
+async function cleanupExpiredRooms(env: Env): Promise<void> {
+  if (!env.FIREBASE_DATABASE_URL || !env.FIREBASE_CLIENT_EMAIL || !env.FIREBASE_PRIVATE_KEY) {
+    console.warn('Scheduled room cleanup skipped: Firebase secrets are not configured.');
+    return;
+  }
+  const databaseUrl = env.FIREBASE_DATABASE_URL.replace(/\/$/, '');
+  const accessToken = await firebaseAccessToken(env);
+  const headers = { Authorization: `Bearer ${accessToken}` };
+  const legacyQuery = new URLSearchParams({ orderBy: JSON.stringify('meta/expiresAt'), endAt: String(Date.now()) });
+  const [expirationResponse, legacyResponse] = await Promise.all([
+    fetch(`${databaseUrl}/roomExpirations.json`, { headers }),
+    fetch(`${databaseUrl}/rooms.json?${legacyQuery}`, { headers }),
+  ]);
+  if (!expirationResponse.ok) throw new Error(`Could not read room expirations (${expirationResponse.status})`);
+  if (!legacyResponse.ok) throw new Error(`Could not query legacy rooms (${legacyResponse.status})`);
+  const expirations = await expirationResponse.json() as Record<string, number> | null;
+  const legacyRooms = await legacyResponse.json() as Record<string, { meta?: { expiresAt?: number } }> | null;
+  const now = Date.now();
+  const expiredRoomIds = new Set(Object.entries(expirations ?? {})
+    .filter(([, expiresAt]) => Number.isFinite(expiresAt) && expiresAt <= now)
+    .map(([roomId]) => roomId));
+  Object.entries(legacyRooms ?? {}).forEach(([roomId, room]) => {
+    if (Number.isFinite(room.meta?.expiresAt) && room.meta!.expiresAt! <= now) expiredRoomIds.add(roomId);
+  });
+  if (!expiredRoomIds.size) return;
+
+  const updates: Record<string, null> = {};
+  expiredRoomIds.forEach((roomId) => {
+    updates[`rooms/${roomId}`] = null;
+    updates[`publicRooms/${roomId}`] = null;
+    updates[`roomExpirations/${roomId}`] = null;
+  });
+  const cleanupResponse = await fetch(`${databaseUrl}/.json`, {
+    method: 'PATCH',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  if (!cleanupResponse.ok) throw new Error(`Could not delete expired rooms (${cleanupResponse.status})`);
+  console.log(`Scheduled room cleanup removed ${expiredRoomIds.size} expired room(s).`);
+}
 
 function quotaDate(): string {
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -190,5 +294,8 @@ export default {
     } catch (error) {
       return json(request, env, { error: error instanceof Error ? error.message : 'Internal error' }, 500);
     }
+  },
+  async scheduled(_controller: ScheduledController, env: Env, context: ExecutionContext): Promise<void> {
+    context.waitUntil(cleanupExpiredRooms(env));
   },
 } satisfies ExportedHandler<Env>;

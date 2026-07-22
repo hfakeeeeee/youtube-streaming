@@ -98,8 +98,11 @@ export async function createRoom(name: string, displayName: string): Promise<str
     changedBy: user.uid,
   };
 
-  await set(ref(db, `rooms/${roomId}/meta`), meta);
-  await set(ref(db, `rooms/${roomId}/playback`), playback);
+  await update(ref(db), {
+    [`rooms/${roomId}/meta`]: meta,
+    [`rooms/${roomId}/playback`]: playback,
+    [`roomExpirations/${roomId}`]: meta.expiresAt,
+  });
   await joinRoom(roomId, displayName);
   return roomId;
 }
@@ -112,7 +115,7 @@ export async function joinRoom(roomIdInput: string, displayName: string): Promis
   if (!metaSnap.exists()) throw new Error('Không tìm thấy phòng này.');
   const meta = metaSnap.val() as RoomMeta;
   if (meta.expiresAt && meta.expiresAt <= Date.now()) {
-    await update(ref(db), { [`rooms/${roomId}`]: null, [`publicRooms/${roomId}`]: null }).catch(() => undefined);
+    await update(ref(db), { [`rooms/${roomId}`]: null, [`publicRooms/${roomId}`]: null, [`roomExpirations/${roomId}`]: null }).catch(() => undefined);
     throw new Error('Phòng đã hết hạn do không hoạt động trong 7 ngày.');
   }
   const banSnap = await get(ref(db, `rooms/${roomId}/bans/${user.uid}`));
@@ -227,6 +230,13 @@ export function reorderQueue(roomId: string, queueIds: string[]): Promise<void> 
   return update(ref(db, `rooms/${roomId}/queue`), updates);
 }
 
+export function restoreQueueItems(roomId: string, items: QueueItem[]): Promise<void> {
+  const { db } = requireFirebase();
+  const updates: Record<string, QueueItem> = {};
+  items.forEach((item) => { updates[item.queueId] = item; });
+  return update(ref(db, `rooms/${roomId}/queue`), updates);
+}
+
 export async function transferHost(roomId: string, newHostUid: string): Promise<void> {
   const { db } = requireFirebase();
   const listing = await get(ref(db, `publicRooms/${roomId}`));
@@ -243,7 +253,7 @@ export function updateCoHost(roomId: string, uid: string, enabled: boolean): Pro
 
 export function closeRoom(roomId: string): Promise<void> {
   const { db } = requireFirebase();
-  return update(ref(db), { [`rooms/${roomId}`]: null, [`publicRooms/${roomId}`]: null });
+  return update(ref(db), { [`rooms/${roomId}`]: null, [`publicRooms/${roomId}`]: null, [`roomExpirations/${roomId}`]: null });
 }
 
 export function kickMember(roomId: string, uid: string): Promise<void> {
@@ -318,7 +328,13 @@ export function saveRoomSettings(roomId: string, settings: RoomMeta): Promise<vo
     [`publicRooms/${roomId}`]: settings.isPublic
       ? { name: settings.name, updatedAt: serverTimestamp(), ownerUid: settings.hostUid }
       : null,
+    [`roomExpirations/${roomId}`]: settings.expiresAt ?? Date.now() + 7 * 24 * 60 * 60 * 1000,
   });
+}
+
+export function renewRoomExpiration(roomId: string, expiresAt: number): Promise<void> {
+  const { db } = requireFirebase();
+  return update(ref(db), { [`rooms/${roomId}/meta/expiresAt`]: expiresAt, [`roomExpirations/${roomId}`]: expiresAt });
 }
 
 export function updateMemberRole(roomId: string, uid: string, role: Role): Promise<void> {

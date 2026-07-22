@@ -185,6 +185,30 @@ Worker cung cấp:
 - `GET /api/playlists/:playlistId`
 - `GET /api/sponsor/:videoId?categories=sponsor,intro`
 
+### Dọn phòng hết hạn tự động
+
+Worker chạy mỗi ngày lúc `03:00 UTC` và xóa đồng thời dữ liệu phòng, danh sách phòng công khai và chỉ mục hết hạn. Để bật tác vụ này:
+
+1. Mở **Firebase Console** > **Project settings** > **Service accounts**.
+2. Chọn **Generate new private key** và tải file JSON. Không commit hoặc đưa file này lên GitHub.
+3. Trong thư mục `worker`, thêm ba secret từ file JSON:
+
+```powershell
+npx wrangler secret put FIREBASE_DATABASE_URL
+npx wrangler secret put FIREBASE_CLIENT_EMAIL
+npx wrangler secret put FIREBASE_PRIVATE_KEY
+```
+
+Giá trị tương ứng là URL Realtime Database (ví dụ `https://PROJECT-default-rtdb.asia-southeast1.firebasedatabase.app`), trường `client_email`, và trường `private_key`. Khi nhập private key, có thể dán nguyên giá trị nhiều dòng bao gồm cả `BEGIN PRIVATE KEY` và `END PRIVATE KEY`.
+
+4. Deploy lại Worker để tạo Cron Trigger:
+
+```powershell
+npm run deploy
+```
+
+Nếu chưa cấu hình đủ ba secret, các API nghe nhạc/search vẫn hoạt động; Worker chỉ bỏ qua lượt dọn phòng theo lịch.
+
 ## 4. Chạy local
 
 Mở terminal tại thư mục gốc:

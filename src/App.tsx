@@ -1,6 +1,8 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AudioWaveform,
+  ArrowDown,
+  ArrowUp,
   Ban,
   Check,
   ChevronDown,
@@ -53,6 +55,8 @@ import {
   normalizeQueue,
   removeQueueItem,
   reorderQueue,
+  renewRoomExpiration,
+  restoreQueueItems,
   sendChat,
   saveRoomSettings,
   setMemberOnline,
@@ -320,8 +324,11 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [notice, setNotice] = useState<{ message: string; tone: 'success' | 'error' } | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [draggedQueueId, setDraggedQueueId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ queueId: string; position: 'before' | 'after' } | null>(null);
+  const [undoQueue, setUndoQueue] = useState<{ items: QueueItem[]; label: string } | null>(null);
   const playerRef = useRef<PlayerHandle>(null);
   const lastSponsorSkip = useRef('');
+  const undoTimer = useRef<number | undefined>(undefined);
 
   const me = useMemo(() => members.find((member) => member.uid === uid), [members, uid]);
   const isOwner = Boolean(uid && meta?.hostUid === uid);
@@ -385,6 +392,8 @@ function RoomPage({ roomId }: { roomId: string }) {
     return subscribeRoom<Record<string, BanRecord> | null>(roomId, 'bans', (value) => setBans(value ? Object.values(value).sort((a, b) => b.bannedAt - a.bannedAt) : []));
   }, [isHost, roomId]);
 
+  useEffect(() => () => window.clearTimeout(undoTimer.current), []);
+
   useEffect(() => {
     if (!meta || !uid || !connected || (!isCoHost && me?.role !== 'dj') || members.some((member) => member.uid === meta.hostUid)) return;
     const timer = window.setTimeout(() => {
@@ -409,7 +418,7 @@ function RoomPage({ roomId }: { roomId: string }) {
       changes.push(updateMemberRole(roomId, member.uid, 'listener'));
     });
     if (meta?.expiresAt && meta.expiresAt < Date.now() + 6 * 24 * 60 * 60 * 1000) {
-      changes.push(updateRoomMeta(roomId, { expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000 }));
+      changes.push(renewRoomExpiration(roomId, Date.now() + 7 * 24 * 60 * 60 * 1000));
     }
     void Promise.all(changes).catch(() => undefined);
   }, [isOwner, me, members, meta?.expiresAt, roomId, uid]);
@@ -482,16 +491,76 @@ function RoomPage({ roomId }: { roomId: string }) {
     showNotice(`Đã thêm ${unique.length} video vào queue.`);
   }
 
-  async function moveQueueItem(targetQueueId: string) {
+  function offerUndo(items: QueueItem[], label: string) {
+    window.clearTimeout(undoTimer.current);
+    setUndoQueue({ items, label });
+    undoTimer.current = window.setTimeout(() => setUndoQueue(null), 7000);
+  }
+
+  async function undoQueueChange() {
+    if (!undoQueue) return;
+    try {
+      await restoreQueueItems(roomId, undoQueue.items);
+      setUndoQueue(null);
+      window.clearTimeout(undoTimer.current);
+      showNotice('Đã khôi phục queue.');
+    } catch (cause) {
+      showNotice(cause instanceof Error ? cause.message : 'Không thể hoàn tác.', 'error');
+    }
+  }
+
+  async function moveQueueItem(targetQueueId: string, position: 'before' | 'after') {
     if (!canManageQueue || !draggedQueueId || draggedQueueId === targetQueueId) return;
     const next = [...queue];
     const from = next.findIndex((item) => item.queueId === draggedQueueId);
-    const to = next.findIndex((item) => item.queueId === targetQueueId);
-    if (from < 0 || to < 0) return;
+    if (from < 0) return;
     const [moved] = next.splice(from, 1);
-    next.splice(to, 0, moved);
+    const targetIndex = next.findIndex((item) => item.queueId === targetQueueId);
+    if (targetIndex < 0) return;
+    next.splice(targetIndex + (position === 'after' ? 1 : 0), 0, moved);
     setDraggedQueueId(null);
-    await reorderQueue(roomId, next.map((item) => item.queueId));
+    setDropTarget(null);
+    try {
+      await reorderQueue(roomId, next.map((item) => item.queueId));
+      offerUndo([...queue], `Đã di chuyển “${moved.title}”`);
+    } catch (cause) {
+      showNotice(cause instanceof Error ? cause.message : 'Không thể đổi thứ tự queue.', 'error');
+    }
+  }
+
+  async function moveQueueBy(queueId: string, direction: -1 | 1) {
+    if (!canManageQueue) return;
+    const index = queue.findIndex((item) => item.queueId === queueId);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= queue.length) return;
+    const next = [...queue];
+    [next[index], next[target]] = [next[target], next[index]];
+    try {
+      await reorderQueue(roomId, next.map((item) => item.queueId));
+      offerUndo([...queue], `Đã di chuyển “${queue[index].title}”`);
+    } catch (cause) {
+      showNotice(cause instanceof Error ? cause.message : 'Không thể đổi thứ tự queue.', 'error');
+    }
+  }
+
+  async function handleRemoveQueueItem(item: QueueItem) {
+    try {
+      await removeQueueItem(roomId, item.queueId);
+      offerUndo([item], `Đã xóa “${item.title}”`);
+    } catch (cause) {
+      showNotice(cause instanceof Error ? cause.message : 'Không thể xóa bài.', 'error');
+    }
+  }
+
+  async function handleClearQueue() {
+    if (!queue.length) return;
+    const removed = [...queue];
+    try {
+      await clearQueue(roomId);
+      offerUndo(removed, `Đã xóa ${removed.length} bài khỏi queue`);
+    } catch (cause) {
+      showNotice(cause instanceof Error ? cause.message : 'Không thể xóa queue.', 'error');
+    }
   }
 
   async function control(status: 'playing' | 'paused') {
@@ -732,18 +801,23 @@ function RoomPage({ roomId }: { roomId: string }) {
             <div className="panel-body queue-panel">
               <div className="panel-title">
                 <div><strong>Tiếp theo</strong><span>{queue.length} video {queueDuration > 0 ? `· ${formatDuration(queueDuration)}` : ''}</span></div>
-                {canManageQueue && queue.length > 0 && <button className="clear-queue" onClick={() => void clearQueue(roomId).then(() => showNotice('Đã xóa queue.')).catch((cause) => showNotice(cause instanceof Error ? cause.message : 'Không thể xóa queue.', 'error'))}><Trash2 size={14} /> Xóa hết</button>}
+                {canManageQueue && queue.length > 0 && <button className="clear-queue" onClick={() => void handleClearQueue()}><Trash2 size={14} /> Xóa hết</button>}
               </div>
               <div className="queue-list">
                 {queue.map((item, index) => (
                   <article
-                    className={`queue-item ${playback.video?.id === item.id ? 'current' : ''} ${draggedQueueId === item.queueId ? 'dragging' : ''}`}
+                    className={`queue-item ${playback.video?.id === item.id ? 'current' : ''} ${draggedQueueId === item.queueId ? 'dragging' : ''} ${dropTarget?.queueId === item.queueId ? `drop-${dropTarget.position}` : ''}`}
                     key={item.queueId}
                     draggable={Boolean(canManageQueue)}
                     onDragStart={() => setDraggedQueueId(item.queueId)}
-                    onDragEnd={() => setDraggedQueueId(null)}
-                    onDragOver={(event) => { if (canManageQueue) event.preventDefault(); }}
-                    onDrop={() => void moveQueueItem(item.queueId)}
+                    onDragEnd={() => { setDraggedQueueId(null); setDropTarget(null); }}
+                    onDragOver={(event) => {
+                      if (!canManageQueue || draggedQueueId === item.queueId) return;
+                      event.preventDefault();
+                      const bounds = event.currentTarget.getBoundingClientRect();
+                      setDropTarget({ queueId: item.queueId, position: event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after' });
+                    }}
+                    onDrop={() => { if (dropTarget) void moveQueueItem(item.queueId, dropTarget.position); }}
                   >
                     <button className="queue-thumb" disabled={!canControlPlayback} onClick={() => void playQueueItem(item)}>
                       <img src={item.thumbnail} alt="" />
@@ -752,8 +826,9 @@ function RoomPage({ roomId }: { roomId: string }) {
                     <div><strong>{item.title}</strong><span>{item.channel}</span><small>thêm bởi {item.addedByName} {item.duration ? `· ${formatDuration(item.duration)}` : ''}</small></div>
                     <div className="queue-item-actions">
                       <button className={`queue-vote ${item.votes?.[uid] ? 'active' : ''}`} title="Bình chọn bài này" onClick={() => void toggleQueueVote(roomId, item.queueId, uid, Boolean(item.votes?.[uid])).catch((cause) => showNotice(cause instanceof Error ? cause.message : 'Không thể bình chọn.', 'error'))}><ThumbsUp size={13} /><span>{Object.keys(item.votes ?? {}).length || ''}</span></button>
+                      {canManageQueue && <span className="queue-move-buttons"><button title="Đưa lên" disabled={index === 0} onClick={() => void moveQueueBy(item.queueId, -1)}><ArrowUp size={12} /></button><button title="Đưa xuống" disabled={index === queue.length - 1} onClick={() => void moveQueueBy(item.queueId, 1)}><ArrowDown size={12} /></button></span>}
                       {canManageQueue && <GripVertical className="queue-grip" size={15} />}
-                      {isHost && <button className="queue-remove" onClick={() => void removeQueueItem(roomId, item.queueId)}><Trash2 size={15} /></button>}
+                      {isHost && <button className="queue-remove" onClick={() => void handleRemoveQueueItem(item)}><Trash2 size={15} /></button>}
                     </div>
                   </article>
                 ))}
@@ -826,6 +901,7 @@ function RoomPage({ roomId }: { roomId: string }) {
           </form>
         </div>
       )}
+      {undoQueue && <div className="undo-toast"><span>{undoQueue.label}</span><button onClick={() => void undoQueueChange()}>Hoàn tác</button><button className="undo-close" onClick={() => setUndoQueue(null)}><X size={14} /></button></div>}
     </main>
   );
 }

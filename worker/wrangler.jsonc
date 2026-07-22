@@ -11,5 +11,8 @@
 			"binding": "SEARCH_QUOTA",
 			"id": "fb0724959730418d92cd518bbe472196"
 		}
-	]
+	],
+	"triggers": {
+		"crons": ["0 3 * * *"]
+	}
 }
