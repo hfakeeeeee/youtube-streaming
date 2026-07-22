@@ -1,11 +1,14 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AudioWaveform,
+  Ban,
   Check,
   ChevronDown,
   ChevronRight,
   GripVertical,
   Globe2,
   Crown,
+  Compass,
   Headphones,
   History,
   ListMusic,
@@ -24,6 +27,7 @@ import {
   Trash2,
   ThumbsUp,
   Users,
+  UserMinus,
   Volume2,
   WandSparkles,
   WifiOff,
@@ -36,31 +40,36 @@ import { getSponsorSegments } from './lib/api';
 import {
   addVideos,
   advanceQueue,
+  banMember,
   clearQueue,
   closeRoom,
   createRoom,
   ensureUser,
   firebaseConfigured,
   joinRoom,
+  kickMember,
   normalizeMembers,
   normalizeMessages,
   normalizeQueue,
   removeQueueItem,
   reorderQueue,
   sendChat,
+  saveRoomSettings,
   setMemberOnline,
   subscribeConnection,
+  subscribePublicRooms,
   subscribeRoom,
   subscribeServerOffset,
   transferHost,
   toggleQueueVote,
+  unbanMember,
   updateMemberRole,
   updateCoHost,
   updateRoomMeta,
   writePlayback,
 } from './lib/firebase';
 import { formatDuration } from './lib/youtube';
-import type { ChatMessage, LoopMode, Member, PlaybackState, QueueItem, Role, RoomMeta, SponsorSegment, VideoItem } from './types';
+import type { BanRecord, ChatMessage, LoopMode, Member, PlaybackState, PublicRoom, QueueItem, Role, RoomMeta, SponsorSegment, VideoItem } from './types';
 
 const EMPTY_PLAYBACK: PlaybackState = {
   video: null,
@@ -159,6 +168,14 @@ function HomePage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [recentRooms, setRecentRooms] = useState(loadRecentRooms);
+  const [publicRooms, setPublicRooms] = useState<PublicRoom[]>([]);
+
+  useEffect(() => {
+    if (!firebaseConfigured) return;
+    let unsubscribe: (() => void) | undefined;
+    void ensureUser().then(() => { unsubscribe = subscribePublicRooms(setPublicRooms); }).catch(() => undefined);
+    return () => unsubscribe?.();
+  }, []);
 
   function saveName() {
     const cleaned = name.trim().slice(0, 32);
@@ -256,6 +273,16 @@ function HomePage() {
           )}
         </div>
       </section>
+      <section className="public-section">
+        <div className="public-heading"><div><span><Compass size={16} /> KHÁM PHÁ</span><h2>Phòng đang mở</h2></div><small>{publicRooms.length} phòng công khai</small></div>
+        {publicRooms.length > 0 ? <div className="public-grid">{publicRooms.slice(0, 8).map((room) => (
+          <a className="public-room" href={`#/room/${room.roomId}`} key={room.roomId}>
+            <span className="public-room-art"><AudioWaveform size={20} /></span>
+            <span><strong>{room.name}</strong><small>{room.roomId} · Tham gia ngay</small></span>
+            <ChevronRight size={17} />
+          </a>
+        ))}</div> : <div className="public-empty"><Compass /><span>Chưa có phòng công khai</span><small>Bật “Phòng công khai” trong cài đặt room để xuất hiện ở đây.</small></div>}
+      </section>
       <section className="how" id="how-it-works">
         <article><span>01</span><Headphones /><h3>Tạo một phòng</h3><p>Không cần đăng ký. Chỉ cần đặt tên và chia sẻ mã phòng.</p></article>
         <article><span>02</span><ListMusic /><h3>Cùng xây queue</h3><p>Dán link hoặc nhập từ khóa rồi Enter để tìm kiếm YouTube.</p></article>
@@ -278,6 +305,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [bans, setBans] = useState<BanRecord[]>([]);
   const [segments, setSegments] = useState<SponsorSegment[]>([]);
   const [activePanel, setActivePanel] = useState<'queue' | 'chat' | 'people'>('queue');
   const [chatText, setChatText] = useState('');
@@ -325,14 +353,15 @@ function RoomPage({ roomId }: { roomId: string }) {
         joinedUid = user.uid;
         const joined = await joinRoom(roomId, displayName);
         saveRecentRoom(joined.roomId, joined.roomName, joined.role);
+        const handleAccessError = () => { if (active) setError('Bạn đã bị đưa khỏi phòng hoặc không còn quyền truy cập.'); };
         unsubscribes.push(
           subscribeConnection(setConnected),
           subscribeServerOffset(setServerOffset),
-          subscribeRoom<RoomMeta | null>(roomId, 'meta', setMeta),
-          subscribeRoom<PlaybackState | null>(roomId, 'playback', (value) => setPlayback(value ?? EMPTY_PLAYBACK)),
-          subscribeRoom<Record<string, Omit<QueueItem, 'queueId'>> | null>(roomId, 'queue', (value) => setQueue(normalizeQueue(value))),
-          subscribeRoom<Record<string, Member> | null>(roomId, 'members', (value) => setMembers(normalizeMembers(value))),
-          subscribeRoom<Record<string, Omit<ChatMessage, 'id'>> | null>(roomId, 'messages', (value) => setMessages(normalizeMessages(value))),
+          subscribeRoom<RoomMeta | null>(roomId, 'meta', setMeta, handleAccessError),
+          subscribeRoom<PlaybackState | null>(roomId, 'playback', (value) => setPlayback(value ?? EMPTY_PLAYBACK), handleAccessError),
+          subscribeRoom<Record<string, Omit<QueueItem, 'queueId'>> | null>(roomId, 'queue', (value) => setQueue(normalizeQueue(value)), handleAccessError),
+          subscribeRoom<Record<string, Member> | null>(roomId, 'members', (value) => setMembers(normalizeMembers(value)), handleAccessError),
+          subscribeRoom<Record<string, Omit<ChatMessage, 'id'>> | null>(roomId, 'messages', (value) => setMessages(normalizeMessages(value)), handleAccessError),
         );
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : 'Không thể kết nối đến phòng.');
@@ -347,6 +376,14 @@ function RoomPage({ roomId }: { roomId: string }) {
       if (joinedUid) void setMemberOnline(roomId, joinedUid, false).catch(() => undefined);
     };
   }, [roomId]);
+
+  useEffect(() => {
+    if (!isHost) {
+      setBans([]);
+      return;
+    }
+    return subscribeRoom<Record<string, BanRecord> | null>(roomId, 'bans', (value) => setBans(value ? Object.values(value).sort((a, b) => b.bannedAt - a.bannedAt) : []));
+  }, [isHost, roomId]);
 
   useEffect(() => {
     if (!meta || !uid || !connected || (!isCoHost && me?.role !== 'dj') || members.some((member) => member.uid === meta.hostUid)) return;
@@ -495,7 +532,12 @@ function RoomPage({ roomId }: { roomId: string }) {
     if (!chatText.trim() || !me || meta?.chatEnabled === false) return;
     const text = chatText;
     setChatText('');
-    await sendChat(roomId, uid, me.name, text);
+    try {
+      await sendChat(roomId, uid, me.name, text);
+    } catch (cause) {
+      setChatText(text);
+      showNotice(cause instanceof Error ? cause.message : 'Bạn đang gửi tin nhắn quá nhanh.', 'error');
+    }
   }
 
   async function copyInvite() {
@@ -511,7 +553,8 @@ function RoomPage({ roomId }: { roomId: string }) {
     const form = new FormData(event.currentTarget);
     const categories = ['sponsor', 'selfpromo', 'interaction', 'intro', 'outro', 'music_offtopic'].filter((category) => form.get(`category:${category}`) === 'on');
     try {
-      await updateRoomMeta(roomId, {
+      await saveRoomSettings(roomId, {
+        ...meta!,
         name: String(form.get('name') ?? '').trim().slice(0, 60) || meta?.name || 'Syncbox room',
         isPublic: form.get('isPublic') === 'on',
         allowListenersToAdd: form.get('allowListenersToAdd') === 'on',
@@ -555,6 +598,32 @@ function RoomPage({ roomId }: { roomId: string }) {
       window.location.hash = '#/';
     } catch (cause) {
       showNotice(cause instanceof Error ? cause.message : 'Không thể đóng phòng.', 'error');
+    }
+  }
+
+  function canModerate(member: Member) {
+    if (member.uid === uid || member.uid === meta?.hostUid) return false;
+    if (isOwner) return true;
+    return isCoHost && !meta?.coHosts?.[member.uid];
+  }
+
+  async function handleKick(member: Member) {
+    if (!canModerate(member) || !window.confirm(`Đưa ${member.name} khỏi phòng? Người này vẫn có thể tham gia lại.`)) return;
+    try {
+      await kickMember(roomId, member.uid);
+      showNotice(`Đã đưa ${member.name} khỏi phòng.`);
+    } catch (cause) {
+      showNotice(cause instanceof Error ? cause.message : 'Không thể kick thành viên.', 'error');
+    }
+  }
+
+  async function handleBan(member: Member) {
+    if (!canModerate(member) || !window.confirm(`Cấm ${member.name} tham gia lại phòng này?`)) return;
+    try {
+      await banMember(roomId, member, uid);
+      showNotice(`Đã cấm ${member.name}.`);
+    } catch (cause) {
+      showNotice(cause instanceof Error ? cause.message : 'Không thể ban thành viên.', 'error');
     }
   }
 
@@ -723,6 +792,8 @@ function RoomPage({ roomId }: { roomId: string }) {
                       {isOwner && <button title="Thêm Co-host" onClick={() => void setCoHost(member, true)}><ShieldCheck size={14} /></button>}
                       {isOwner && <button title="Chuyển quyền Owner" onClick={() => void handOffHost(member)}><Crown size={14} /></button>}
                       <RolePicker value={member.role === 'dj' ? 'dj' : 'listener'} onChange={(role) => void updateMemberRole(roomId, member.uid, role as Role).then(() => showNotice(`Đã cập nhật quyền của ${member.name}.`)).catch((cause) => showNotice(cause instanceof Error ? cause.message : 'Không thể cập nhật quyền.', 'error'))} />
+                      {canModerate(member) && <button className="moderation-button" title="Đưa khỏi phòng" onClick={() => void handleKick(member)}><UserMinus size={14} /></button>}
+                      {canModerate(member) && <button className="moderation-button ban" title="Cấm khỏi phòng" onClick={() => void handleBan(member)}><Ban size={14} /></button>}
                     </div>
                   ) : <i className="member-online" />}
                 </article>
@@ -747,6 +818,10 @@ function RoomPage({ roomId }: { roomId: string }) {
               ['sponsor', 'Sponsor'], ['selfpromo', 'Tự quảng bá'], ['interaction', 'Kêu gọi tương tác'],
               ['intro', 'Intro'], ['outro', 'Outro'], ['music_offtopic', 'Ngoài nội dung nhạc'],
             ].map(([value, label]) => <label key={value}><input type="checkbox" name={`category:${value}`} defaultChecked={meta.sponsorCategories.includes(value)} /><span>{label}</span></label>)}</fieldset>
+            <div className="ban-settings">
+              <div><strong>Danh sách bị cấm</strong><small>{bans.length} thành viên</small></div>
+              {bans.length > 0 ? bans.map((ban) => <div className="banned-user" key={ban.uid}><span><strong>{ban.name}</strong><small>{ban.uid.slice(0, 8)}…</small></span><button type="button" onClick={() => void unbanMember(roomId, ban.uid).then(() => showNotice(`Đã bỏ cấm ${ban.name}.`)).catch((cause) => showNotice(cause instanceof Error ? cause.message : 'Không thể bỏ cấm.', 'error'))}>Bỏ cấm</button></div>) : <p>Chưa có thành viên nào bị cấm.</p>}
+            </div>
             <div className="modal-actions">{isOwner ? <button type="button" className="danger-button" onClick={() => void handleCloseRoom()}><Trash2 size={15} /> Đóng phòng</button> : <span />}<button className="save-settings">Lưu thay đổi</button></div>
           </form>
         </div>

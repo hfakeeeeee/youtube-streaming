@@ -26,6 +26,20 @@ export interface Member {
   online: boolean;
 }
 
+export interface BanRecord {
+  uid: string;
+  name: string;
+  bannedAt: number;
+  bannedBy: string;
+}
+
+export interface PublicRoom {
+  roomId: string;
+  name: string;
+  updatedAt: number;
+  ownerUid: string;
+}
+
 export interface RoomMeta {
   name: string;
   hostUid: string;

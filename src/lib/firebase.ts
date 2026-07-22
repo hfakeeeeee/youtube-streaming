@@ -14,7 +14,7 @@ import {
   type Database,
   type Unsubscribe,
 } from 'firebase/database';
-import type { ChatMessage, LoopMode, Member, PlaybackState, QueueItem, Role, RoomMeta, VideoItem } from '../types';
+import type { BanRecord, ChatMessage, LoopMode, Member, PlaybackState, PublicRoom, QueueItem, Role, RoomMeta, VideoItem } from '../types';
 
 const config = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -112,9 +112,11 @@ export async function joinRoom(roomIdInput: string, displayName: string): Promis
   if (!metaSnap.exists()) throw new Error('Không tìm thấy phòng này.');
   const meta = metaSnap.val() as RoomMeta;
   if (meta.expiresAt && meta.expiresAt <= Date.now()) {
-    await remove(ref(db, `rooms/${roomId}`)).catch(() => undefined);
+    await update(ref(db), { [`rooms/${roomId}`]: null, [`publicRooms/${roomId}`]: null }).catch(() => undefined);
     throw new Error('Phòng đã hết hạn do không hoạt động trong 7 ngày.');
   }
+  const banSnap = await get(ref(db, `rooms/${roomId}/bans/${user.uid}`));
+  if (banSnap.exists()) throw new Error('Bạn đã bị cấm tham gia phòng này.');
   let previousRole: Role = 'listener';
   try {
     const existing = await get(ref(db, `rooms/${roomId}/members/${user.uid}`));
@@ -146,9 +148,17 @@ export function leaveRoom(roomId: string, uid: string): Promise<void> {
   return remove(ref(db, `rooms/${roomId}/members/${uid}`));
 }
 
-export function subscribeRoom<T>(roomId: string, key: string, callback: (value: T) => void): Unsubscribe {
+export function subscribeRoom<T>(roomId: string, key: string, callback: (value: T) => void, onError?: (error: Error) => void): Unsubscribe {
   const { db } = requireFirebase();
-  return onValue(ref(db, `rooms/${roomId}/${key}`), (snapshot) => callback(snapshot.val() as T));
+  return onValue(ref(db, `rooms/${roomId}/${key}`), (snapshot) => callback(snapshot.val() as T), (error) => onError?.(error));
+}
+
+export function subscribePublicRooms(callback: (rooms: PublicRoom[]) => void): Unsubscribe {
+  const { db } = requireFirebase();
+  return onValue(ref(db, 'publicRooms'), (snapshot) => {
+    const value = snapshot.val() as Record<string, Omit<PublicRoom, 'roomId'>> | null;
+    callback(value ? Object.entries(value).map(([roomId, room]) => ({ ...room, roomId })).sort((a, b) => b.updatedAt - a.updatedAt) : []);
+  });
 }
 
 export function subscribeConnection(callback: (connected: boolean) => void): Unsubscribe {
@@ -163,10 +173,10 @@ export function subscribeServerOffset(callback: (offset: number) => void): Unsub
 
 export async function addVideos(roomId: string, videos: VideoItem[], member: Member): Promise<void> {
   const { db } = requireFirebase();
-  const additions: Record<string, QueueItem> = {};
+  const additions: Record<string, unknown> = {};
   for (const video of videos.slice(0, 50)) {
     const itemRef = push(ref(db, `rooms/${roomId}/queue`));
-    additions[itemRef.key!] = {
+    additions[`rooms/${roomId}/queue/${itemRef.key!}`] = {
       ...video,
       queueId: itemRef.key!,
       addedAt: Date.now(),
@@ -174,7 +184,8 @@ export async function addVideos(roomId: string, videos: VideoItem[], member: Mem
       addedByName: member.name,
     };
   }
-  await update(ref(db, `rooms/${roomId}/queue`), additions);
+  additions[`rooms/${roomId}/members/${member.uid}/lastQueueAt`] = serverTimestamp();
+  await update(ref(db), additions);
 }
 
 export function removeQueueItem(roomId: string, queueId: string): Promise<void> {
@@ -216,9 +227,12 @@ export function reorderQueue(roomId: string, queueIds: string[]): Promise<void> 
   return update(ref(db, `rooms/${roomId}/queue`), updates);
 }
 
-export function transferHost(roomId: string, newHostUid: string): Promise<void> {
+export async function transferHost(roomId: string, newHostUid: string): Promise<void> {
   const { db } = requireFirebase();
-  return update(ref(db, `rooms/${roomId}/meta`), { hostUid: newHostUid });
+  const listing = await get(ref(db, `publicRooms/${roomId}`));
+  const updates: Record<string, unknown> = { [`rooms/${roomId}/meta/hostUid`]: newHostUid };
+  if (listing.exists()) updates[`publicRooms/${roomId}/ownerUid`] = newHostUid;
+  await update(ref(db), updates);
 }
 
 export function updateCoHost(roomId: string, uid: string, enabled: boolean): Promise<void> {
@@ -229,7 +243,26 @@ export function updateCoHost(roomId: string, uid: string, enabled: boolean): Pro
 
 export function closeRoom(roomId: string): Promise<void> {
   const { db } = requireFirebase();
-  return remove(ref(db, `rooms/${roomId}`));
+  return update(ref(db), { [`rooms/${roomId}`]: null, [`publicRooms/${roomId}`]: null });
+}
+
+export function kickMember(roomId: string, uid: string): Promise<void> {
+  const { db } = requireFirebase();
+  return remove(ref(db, `rooms/${roomId}/members/${uid}`));
+}
+
+export function banMember(roomId: string, member: Member, bannedBy: string): Promise<void> {
+  const { db } = requireFirebase();
+  const record: BanRecord = { uid: member.uid, name: member.name, bannedAt: Date.now(), bannedBy };
+  return update(ref(db), {
+    [`rooms/${roomId}/bans/${member.uid}`]: record,
+    [`rooms/${roomId}/members/${member.uid}`]: null,
+  });
+}
+
+export function unbanMember(roomId: string, uid: string): Promise<void> {
+  const { db } = requireFirebase();
+  return remove(ref(db, `rooms/${roomId}/bans/${uid}`));
 }
 
 export async function advanceQueue(
@@ -267,12 +300,25 @@ export async function advanceQueue(
 export async function sendChat(roomId: string, uid: string, name: string, text: string): Promise<void> {
   const { db } = requireFirebase();
   const messageRef = push(ref(db, `rooms/${roomId}/messages`));
-  await set(messageRef, { uid, name, text: text.trim().slice(0, 500), sentAt: serverTimestamp() });
+  await update(ref(db), {
+    [`rooms/${roomId}/messages/${messageRef.key!}`]: { uid, name, text: text.trim().slice(0, 500), sentAt: serverTimestamp() },
+    [`rooms/${roomId}/members/${uid}/lastChatAt`]: serverTimestamp(),
+  });
 }
 
 export function updateRoomMeta(roomId: string, patch: Partial<RoomMeta>): Promise<void> {
   const { db } = requireFirebase();
   return update(ref(db, `rooms/${roomId}/meta`), patch);
+}
+
+export function saveRoomSettings(roomId: string, settings: RoomMeta): Promise<void> {
+  const { db } = requireFirebase();
+  return update(ref(db), {
+    [`rooms/${roomId}/meta`]: settings,
+    [`publicRooms/${roomId}`]: settings.isPublic
+      ? { name: settings.name, updatedAt: serverTimestamp(), ownerUid: settings.hostUid }
+      : null,
+  });
 }
 
 export function updateMemberRole(roomId: string, uid: string, role: Role): Promise<void> {
