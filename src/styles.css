@@ -296,14 +296,15 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 .queue-item.drop-before::before, .queue-item.drop-after::after { content: ''; position: absolute; z-index: 5; left: 8px; right: 8px; height: 2px; border-radius: 2px; outline: 4px solid rgba(56,214,232,.045); background: linear-gradient(90deg,var(--primary-bright),var(--accent)); box-shadow: 0 0 12px rgba(56,214,232,.45); pointer-events: none; }
 .queue-item.drop-before::before { top: -2px; }
 .queue-item.drop-after::after { bottom: -2px; }
-.queue-item-actions { display: flex; align-items: center; justify-content: flex-end; gap: 3px; color: #555264; }
+.queue-item > .queue-item-actions { display: flex; align-items: center; justify-content: flex-end; gap: 4px; color: #555264; }
+.queue-item-actions > button, .queue-item-actions .queue-move-buttons > button, .queue-item-actions > .queue-grip { box-sizing: border-box; width: 26px; min-width: 26px; height: 26px; min-height: 26px; display: grid; place-items: center; padding: 0; border-radius: 6px; }
 .queue-grip { cursor: grab; }
 .queue-grip:active { cursor: grabbing; }
-.queue-vote { min-width: 25px; min-height: 24px; display: flex; align-items: center; justify-content: center; gap: 2px; padding: 2px; border: 0; border-radius: 6px; color: #686577; background: transparent; cursor: pointer; }
+.queue-vote { position: relative; border: 0; color: #686577; background: transparent; cursor: pointer; }
 .queue-vote span { color: currentColor; font-size: 7px; }
 .queue-vote:hover, .queue-vote.active { color: var(--accent); background: rgba(56,214,232,.07); }
-.queue-move-buttons { display: grid; grid-template-rows: repeat(2,13px); gap: 1px; }
-.queue-move-buttons button { width: 22px; height: 13px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 4px; color: #777487; background: rgba(255,255,255,.025); cursor: pointer; }
+.queue-move-buttons { display: flex; gap: 4px; }
+.queue-move-buttons button { border: 0; color: #777487; background: rgba(255,255,255,.025); cursor: pointer; }
 .queue-move-buttons button:hover:not(:disabled) { color: #fff; background: rgba(139,92,246,.13); }
 .queue-move-buttons button:disabled { opacity: .2; }
 .queue-grip { flex: none; }

@@ -680,13 +680,22 @@ function RoomPage({ roomId }: { roomId: string }) {
 
   async function playQueueItem(item: QueueItem) {
     if (!canControlPlayback) return;
+    const previous = queue.find((entry) => entry.id === playback.video?.id);
     pendingQueueStart.current = item.id;
-    await writePlayback(roomId, uid, { video: item, status: 'paused', position: 0, reason: 'queue' });
-    if (item.id === playback.video?.id) {
+    try {
+      if (loopMode === 'off' && previous && previous.queueId !== item.queueId) {
+        await removeQueueItem(roomId, previous.queueId);
+      }
+      await writePlayback(roomId, uid, { video: item, status: 'paused', position: 0, reason: 'queue' });
+      if (item.id === playback.video?.id) {
+        pendingQueueStart.current = null;
+        playerRef.current?.seek(0);
+        await writePlayback(roomId, uid, { status: 'playing', position: 0, reason: 'queue' });
+        playerRef.current?.play();
+      }
+    } catch (cause) {
       pendingQueueStart.current = null;
-      playerRef.current?.seek(0);
-      await writePlayback(roomId, uid, { status: 'playing', position: 0, reason: 'queue' });
-      playerRef.current?.play();
+      showNotice(cause instanceof Error ? cause.message : 'Không thể chuyển bài.', 'error');
     }
   }
 
