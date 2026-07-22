@@ -46,12 +46,26 @@ function loadApi(): Promise<any> {
   return apiPromise;
 }
 
+function buildEmbedUrl(videoId: string | undefined, startSeconds: number): string {
+  const params = new URLSearchParams({
+    enablejsapi: '1',
+    autoplay: '0',
+    controls: '0',
+    playsinline: '1',
+    rel: '0',
+    origin: window.location.origin,
+  });
+  if (startSeconds > 0) params.set('start', String(Math.floor(startSeconds)));
+  return `https://www.youtube.com/embed/${encodeURIComponent(videoId ?? '')}?${params}`;
+}
+
 export const YouTubePlayer = forwardRef<PlayerHandle, Props>(function YouTubePlayer(
   { videoId, startSeconds = 0, onReady, onEnded, onAutoplayBlocked },
   forwardedRef,
 ) {
   const mountRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<any>(null);
+  const iframeId = useRef(`syncbox-youtube-${Math.random().toString(36).slice(2)}`).current;
   const latestCallbacks = useRef({ onReady, onEnded, onAutoplayBlocked });
   const initialVideo = useRef({ videoId, startSeconds });
   const [ready, setReady] = useState(false);
@@ -73,23 +87,31 @@ export const YouTubePlayer = forwardRef<PlayerHandle, Props>(function YouTubePla
 
   useEffect(() => {
     let disposed = false;
+    const mount = mountRef.current;
+    if (!mount) return undefined;
+
+    // Purify-style player: the iframe must be credentialless before its src is
+    // assigned so YouTube loads inside a fresh, ephemeral cookie/storage jar.
+    const iframe = document.createElement('iframe');
+    iframe.id = iframeId;
+    iframe.title = 'YouTube video player';
+    iframe.width = '100%';
+    iframe.height = '100%';
+    iframe.setAttribute('frameborder', '0');
+    iframe.setAttribute('credentialless', '');
+    iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-presentation');
+    iframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen; web-share');
+    iframe.setAttribute('allowfullscreen', '');
+    iframe.referrerPolicy = 'strict-origin-when-cross-origin';
+    iframe.src = buildEmbedUrl(initialVideo.current.videoId, initialVideo.current.startSeconds);
+    mount.replaceChildren(iframe);
+
     loadApi().then((YT) => {
       if (disposed || !mountRef.current || playerRef.current) return;
-      playerRef.current = new YT.Player(mountRef.current, {
-        host: 'https://www.youtube-nocookie.com',
-        width: '100%',
-        height: '100%',
-        videoId: initialVideo.current.videoId ?? '',
-        playerVars: {
-          autoplay: 0,
-          controls: 0,
-          playsinline: 1,
-          rel: 0,
-          origin: window.location.origin,
-          start: Math.floor(initialVideo.current.startSeconds),
-        },
+      playerRef.current = new YT.Player(iframeId, {
         events: {
           onReady: () => {
+            if (disposed) return;
             setReady(true);
             latestCallbacks.current.onReady?.();
           },
@@ -104,8 +126,9 @@ export const YouTubePlayer = forwardRef<PlayerHandle, Props>(function YouTubePla
       disposed = true;
       playerRef.current?.destroy?.();
       playerRef.current = null;
+      mount.replaceChildren();
     };
-  }, []);
+  }, [iframeId]);
 
   useEffect(() => {
     if (!ready || !videoId) return;
