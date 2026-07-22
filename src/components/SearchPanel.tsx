@@ -33,7 +33,14 @@ export function SearchPanel({ canAdd, onAdd }: Props) {
       const parsed = parseYouTubeInput(value);
       if (parsed?.playlistId) {
         if (isYouTubeMixPlaylist(parsed.playlistId)) {
-          throw new Error('Đây là YouTube Mix động nên YouTube có thể tự thêm bài đề xuất. Hãy dùng link playlist tĩnh (thường có mã bắt đầu bằng PL).');
+          if (!parsed.videoId) {
+            throw new Error('Link YouTube Mix này không có video cụ thể. Hãy mở một bài trong Mix rồi sao chép link của bài đó.');
+          }
+          const video = await getVideo(parsed.videoId);
+          await onAdd([video]);
+          setQuery('');
+          setResults([]);
+          return;
         }
         const videos = await getPlaylist(parsed.playlistId);
         await onAdd(videos);

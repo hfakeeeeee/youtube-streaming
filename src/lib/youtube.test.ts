@@ -24,6 +24,13 @@ describe('parseYouTubeInput', () => {
     assert.equal(isYouTubeMixPlaylist('PL1234567890abc'), false);
   });
 
+  it('keeps the current video when parsing a YouTube Mix link', () => {
+    assert.deepEqual(parseYouTubeInput('https://youtu.be/dQw4w9WgXcQ?list=RDdQw4w9WgXcQ'), {
+      videoId: 'dQw4w9WgXcQ',
+      playlistId: 'RDdQw4w9WgXcQ',
+    });
+  });
+
   it('rejects non-YouTube URLs', () => {
     assert.equal(parseYouTubeInput('https://example.com/watch?v=dQw4w9WgXcQ'), null);
   });
