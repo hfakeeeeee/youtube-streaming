@@ -5,7 +5,7 @@ Phòng nghe YouTube cộng tác theo thời gian thực, kết hợp room/queue 
 ## Tính năng MVP
 
 - Tạo và tham gia phòng bằng mã 6 ký tự, không cần tài khoản.
-- Host, DJ và Listener với quyền riêng biệt; DJ có thể quản lý queue, play/pause và chuyển bài.
+- Owner, Co-host, DJ và Listener với quyền riêng biệt; Co-host vận hành phòng, DJ quản lý queue, play/pause và chuyển bài.
 - Dán video, Shorts, playlist hoặc link `youtu.be` để thêm vào queue.
 - Chỉ tìm kiếm YouTube sau khi người dùng nhấn Enter.
 - Đồng bộ play, pause, seek và skip bằng thời gian Firebase server; âm lượng được lưu riêng trên từng thiết bị.

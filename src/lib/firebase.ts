@@ -221,6 +221,12 @@ export function transferHost(roomId: string, newHostUid: string): Promise<void> 
   return update(ref(db, `rooms/${roomId}/meta`), { hostUid: newHostUid });
 }
 
+export function updateCoHost(roomId: string, uid: string, enabled: boolean): Promise<void> {
+  const { db } = requireFirebase();
+  const coHostRef = ref(db, `rooms/${roomId}/meta/coHosts/${uid}`);
+  return enabled ? set(coHostRef, true) : remove(coHostRef);
+}
+
 export function closeRoom(roomId: string): Promise<void> {
   const { db } = requireFirebase();
   return remove(ref(db, `rooms/${roomId}`));

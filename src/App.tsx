@@ -1,5 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Check,
+  ChevronDown,
   ChevronRight,
   GripVertical,
   Globe2,
@@ -53,6 +55,7 @@ import {
   transferHost,
   toggleQueueVote,
   updateMemberRole,
+  updateCoHost,
   updateRoomMeta,
   writePlayback,
 } from './lib/firebase';
@@ -107,6 +110,41 @@ function useHashRoute() {
     return () => window.removeEventListener('hashchange', update);
   }, []);
   return route;
+}
+
+function RolePicker({ value, onChange }: { value: 'listener' | 'dj'; onChange: (role: 'listener' | 'dj') => void }) {
+  const labels = { listener: 'Listener', dj: 'DJ' } as const;
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false); };
+    document.addEventListener('pointerdown', closeOnOutsideClick);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsideClick);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [open]);
+  return (
+    <div className={`role-picker ${open ? 'open' : ''}`} ref={rootRef}>
+      <button type="button" className="role-trigger" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((value) => !value)}>{labels[value]} <ChevronDown size={13} /></button>
+      {open && <div className="role-menu" role="menu">
+        {(['listener', 'dj'] as const).map((role) => (
+          <button key={role} type="button" className={value === role ? 'active' : ''} onClick={() => {
+            onChange(role);
+            setOpen(false);
+          }}>
+            <span><i className={`role-dot ${role}`} />{labels[role]}</span>
+            {value === role && <Check size={14} />}
+          </button>
+        ))}
+      </div>}
+    </div>
+  );
 }
 
 export default function App() {
@@ -258,7 +296,9 @@ function RoomPage({ roomId }: { roomId: string }) {
   const lastSponsorSkip = useRef('');
 
   const me = useMemo(() => members.find((member) => member.uid === uid), [members, uid]);
-  const isHost = Boolean(uid && meta?.hostUid === uid);
+  const isOwner = Boolean(uid && meta?.hostUid === uid);
+  const isCoHost = Boolean(uid && meta?.coHosts?.[uid]);
+  const isHost = isOwner || isCoHost;
   const canManageQueue = isHost || me?.role === 'dj';
   const canControlPlayback = isHost || me?.role === 'dj';
   const canAdd = canManageQueue || Boolean(meta?.allowListenersToAdd);
@@ -309,12 +349,12 @@ function RoomPage({ roomId }: { roomId: string }) {
   }, [roomId]);
 
   useEffect(() => {
-    if (!meta || !uid || !connected || me?.role !== 'dj' || members.some((member) => member.uid === meta.hostUid)) return;
+    if (!meta || !uid || !connected || (!isCoHost && me?.role !== 'dj') || members.some((member) => member.uid === meta.hostUid)) return;
     const timer = window.setTimeout(() => {
-      void transferHost(roomId, uid).then(() => setNotice({ message: 'Bạn đã tiếp quản Host vì Host cũ mất kết nối.', tone: 'success' })).catch(() => undefined);
+      void transferHost(roomId, uid).then(() => setNotice({ message: 'Bạn đã tiếp quản Owner vì Owner cũ mất kết nối.', tone: 'success' })).catch(() => undefined);
     }, 15000);
     return () => window.clearTimeout(timer);
-  }, [connected, me?.role, members, meta, roomId, uid]);
+  }, [connected, isCoHost, me?.role, members, meta, roomId, uid]);
 
   useEffect(() => {
     if (!connected || !uid) return;
@@ -325,7 +365,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   }, [connected, roomId, uid]);
 
   useEffect(() => {
-    if (!isHost || !me) return;
+    if (!isOwner || !me) return;
     const changes: Array<Promise<void>> = [];
     if (me.role !== 'host') changes.push(updateMemberRole(roomId, uid, 'host'));
     members.filter((member) => member.uid !== uid && member.role === 'host').forEach((member) => {
@@ -335,7 +375,7 @@ function RoomPage({ roomId }: { roomId: string }) {
       changes.push(updateRoomMeta(roomId, { expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000 }));
     }
     void Promise.all(changes).catch(() => undefined);
-  }, [isHost, me, members, meta?.expiresAt, roomId, uid]);
+  }, [isOwner, me, members, meta?.expiresAt, roomId, uid]);
 
   useEffect(() => {
     if (!playback.video?.id || !meta?.sponsorBlockEnabled) {
@@ -378,7 +418,7 @@ function RoomPage({ roomId }: { roomId: string }) {
       const expected = expectedPosition(playback, serverOffset);
       if (Math.abs(player.currentTime() - expected) > 2.5) player.seek(expected);
 
-      if (!isHost || !meta?.sponsorBlockEnabled) return;
+      if (!isOwner || !meta?.sponsorBlockEnabled) return;
       const current = player.currentTime();
       const match = segments.find(({ segment, actionType }) => actionType === 'skip' && current >= segment[0] && current < segment[1] - 0.2);
       if (!match) return;
@@ -388,7 +428,7 @@ function RoomPage({ roomId }: { roomId: string }) {
       void writePlayback(roomId, uid, { position: match.segment[1], status: 'playing', reason: 'sponsorblock' });
     }, 500);
     return () => window.clearInterval(timer);
-  }, [isHost, meta?.sponsorBlockEnabled, playback, roomId, segments, serverOffset, uid]);
+  }, [isOwner, meta?.sponsorBlockEnabled, playback, roomId, segments, serverOffset, uid]);
 
   async function addToQueue(videos: VideoItem[]) {
     if (!me) return;
@@ -488,17 +528,27 @@ function RoomPage({ roomId }: { roomId: string }) {
   }
 
   async function handOffHost(member: Member) {
-    if (!isHost || !window.confirm(`Chuyển quyền Host cho ${member.name}?`)) return;
+    if (!isOwner || !window.confirm(`Chuyển quyền Owner cho ${member.name}?`)) return;
     try {
       await transferHost(roomId, member.uid);
-      showNotice(`${member.name} hiện là Host mới.`);
+      showNotice(`${member.name} hiện là Owner mới.`);
     } catch (cause) {
-      showNotice(cause instanceof Error ? cause.message : 'Không thể chuyển Host.', 'error');
+      showNotice(cause instanceof Error ? cause.message : 'Không thể chuyển Owner.', 'error');
+    }
+  }
+
+  async function setCoHost(member: Member, enabled: boolean) {
+    if (!isOwner) return;
+    try {
+      await updateCoHost(roomId, member.uid, enabled);
+      showNotice(enabled ? `${member.name} hiện là Co-host.` : `Đã thu hồi quyền Co-host của ${member.name}.`);
+    } catch (cause) {
+      showNotice(cause instanceof Error ? cause.message : 'Không thể cập nhật Co-host.', 'error');
     }
   }
 
   async function handleCloseRoom() {
-    if (!isHost || !window.confirm('Đóng phòng và xóa toàn bộ queue, chat, thành viên? Thao tác này không thể hoàn tác.')) return;
+    if (!isOwner || !window.confirm('Đóng phòng và xóa toàn bộ queue, chat, thành viên? Thao tác này không thể hoàn tác.')) return;
     try {
       await closeRoom(roomId);
       localStorage.setItem(RECENT_ROOMS_KEY, JSON.stringify(loadRecentRooms().filter((room) => room.roomId !== roomId)));
@@ -540,7 +590,7 @@ function RoomPage({ roomId }: { roomId: string }) {
                 videoId={playback.video.id}
                 startSeconds={expectedPosition(playback, serverOffset)}
                 onReady={conformPlayer}
-                onEnded={() => { if (isHost) void skip(loopMode); }}
+                onEnded={() => { if (isOwner) void skip(loopMode); }}
                 onAutoplayBlocked={() => setNeedsActivation(true)}
               />
             ) : (
@@ -665,11 +715,14 @@ function RoomPage({ roomId }: { roomId: string }) {
               {members.map((member) => (
                 <article className="member" key={member.uid}>
                   <div className="member-avatar">{member.name.slice(0, 1).toUpperCase()}</div>
-                  <div><strong>{member.name} {member.uid === uid && '(bạn)'}</strong><span>{member.uid === meta.hostUid ? 'Host' : member.role === 'dj' ? 'DJ' : 'Listener'}</span></div>
-                  {member.uid === meta.hostUid ? <Crown className="host-crown" size={18} /> : isHost ? (
+                  <div><strong>{member.name} {member.uid === uid && '(bạn)'}</strong><span>{member.uid === meta.hostUid ? 'Owner' : meta.coHosts?.[member.uid] ? 'Co-host' : member.role === 'dj' ? 'DJ' : 'Listener'}</span></div>
+                  {member.uid === meta.hostUid ? <Crown className="host-crown" size={18} /> : meta.coHosts?.[member.uid] ? (
+                    isOwner ? <button className="cohost-button active" title="Thu hồi quyền Co-host" onClick={() => void setCoHost(member, false)}><ShieldCheck size={15} /></button> : <ShieldCheck className="cohost-mark" size={18} />
+                  ) : isHost ? (
                     <div className="member-admin">
-                      <button title="Chuyển quyền Host" onClick={() => void handOffHost(member)}><Crown size={14} /></button>
-                      <select value={member.role === 'host' ? 'listener' : member.role} onChange={(event) => void updateMemberRole(roomId, member.uid, event.target.value as Role).then(() => showNotice(`Đã cập nhật quyền của ${member.name}.`)).catch((cause) => showNotice(cause instanceof Error ? cause.message : 'Không thể cập nhật quyền.', 'error'))}><option value="listener">Listener</option><option value="dj">DJ</option></select>
+                      {isOwner && <button title="Thêm Co-host" onClick={() => void setCoHost(member, true)}><ShieldCheck size={14} /></button>}
+                      {isOwner && <button title="Chuyển quyền Owner" onClick={() => void handOffHost(member)}><Crown size={14} /></button>}
+                      <RolePicker value={member.role === 'dj' ? 'dj' : 'listener'} onChange={(role) => void updateMemberRole(roomId, member.uid, role as Role).then(() => showNotice(`Đã cập nhật quyền của ${member.name}.`)).catch((cause) => showNotice(cause instanceof Error ? cause.message : 'Không thể cập nhật quyền.', 'error'))} />
                     </div>
                   ) : <i className="member-online" />}
                 </article>
@@ -694,7 +747,7 @@ function RoomPage({ roomId }: { roomId: string }) {
               ['sponsor', 'Sponsor'], ['selfpromo', 'Tự quảng bá'], ['interaction', 'Kêu gọi tương tác'],
               ['intro', 'Intro'], ['outro', 'Outro'], ['music_offtopic', 'Ngoài nội dung nhạc'],
             ].map(([value, label]) => <label key={value}><input type="checkbox" name={`category:${value}`} defaultChecked={meta.sponsorCategories.includes(value)} /><span>{label}</span></label>)}</fieldset>
-            <div className="modal-actions"><button type="button" className="danger-button" onClick={() => void handleCloseRoom()}><Trash2 size={15} /> Đóng phòng</button><button className="save-settings">Lưu thay đổi</button></div>
+            <div className="modal-actions">{isOwner ? <button type="button" className="danger-button" onClick={() => void handleCloseRoom()}><Trash2 size={15} /> Đóng phòng</button> : <span />}<button className="save-settings">Lưu thay đổi</button></div>
           </form>
         </div>
       )}

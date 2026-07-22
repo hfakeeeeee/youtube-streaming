@@ -29,6 +29,7 @@ export interface Member {
 export interface RoomMeta {
   name: string;
   hostUid: string;
+  coHosts?: Record<string, true>;
   createdAt: number;
   isPublic: boolean;
   sponsorBlockEnabled: boolean;
