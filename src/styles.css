@@ -145,7 +145,8 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 .online-pill { display: flex; align-items: center; gap: 7px; padding: 7px 10px; color: #918fa2; font-size: 10px; }
 .online-pill i, .member-online { width: 6px; height: 6px; border-radius: 50%; background: var(--success); box-shadow: 0 0 10px rgba(74,222,128,.7); }
 .room-actions .avatar-button { width: 37px; padding: 0; justify-content: center; border: 0; color: #fff; background: linear-gradient(145deg, #9b6cff, #6742d5); box-shadow: 0 0 0 3px rgba(139,92,246,.12); font-weight: 700; }
-.room-shell { display: grid; grid-template-columns: minmax(0,1fr) 410px; min-height: calc(100vh - 76px); }
+.room-shell { display: grid; grid-template-columns: minmax(0,1fr) 390px 250px; min-height: calc(100vh - 76px); transition: grid-template-columns .22s ease; }
+.room-shell.panel-collapsed { grid-template-columns: minmax(0,1fr) 58px 250px; }
 .player-column { min-width: 0; padding: 28px clamp(28px,4vw,64px) 34px; }
 
 /* Search command bar */
@@ -225,13 +226,22 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 
 /* Queue, chat and people */
 .side-panel { min-width: 0; border-left: 1px solid var(--line); background: rgba(12,12,20,.74); }
-.panel-tabs { height: 64px; display: grid; grid-template-columns: repeat(3,1fr); padding: 8px 10px 0; border-bottom: 1px solid var(--line); }
+.panel-tabs { height: 64px; display: grid; grid-template-columns: repeat(2,1fr) 38px; padding: 8px 7px 0 10px; border-bottom: 1px solid var(--line); }
 .panel-tabs button { position: relative; display: flex; align-items: center; justify-content: center; gap: 6px; border: 0; border-radius: 9px 9px 0 0; color: #777487; background: transparent; font-size: 10px; font-weight: 600; cursor: pointer; transition: .2s; }
+.panel-tabs button b { font: inherit; }
 .panel-tabs button:hover { color: #bbb8c8; background: rgba(255,255,255,.025); }
 .panel-tabs button.active { color: var(--text); }
 .panel-tabs button.active::after { content: ''; position: absolute; bottom: -1px; width: 28px; height: 2px; border-radius: 2px; background: linear-gradient(90deg,var(--primary-bright),var(--accent)); box-shadow: 0 0 12px rgba(139,92,246,.55); }
 .panel-tabs svg { width: 14px; }
 .panel-tabs span { min-width: 17px; padding: 1px 5px; border-radius: 9px; color: #bbb8ca; background: #28263a; font-size: 7px; }
+.panel-tabs .panel-collapse { align-self: center; width: 32px; height: 32px; padding: 0; border: 1px solid var(--line); border-radius: 8px; }
+.panel-tabs .panel-collapse:hover { color: #d1c9ee; border-color: rgba(139,92,246,.3); background: rgba(139,92,246,.08); }
+.side-panel.collapsed .panel-tabs { height: auto; grid-template-columns: 1fr; gap: 7px; padding: 10px 8px; border-bottom: 0; }
+.side-panel.collapsed .panel-tabs button { width: 40px; height: 40px; border-radius: 9px; }
+.side-panel.collapsed .panel-tabs button b, .side-panel.collapsed .panel-tabs button span { display: none; }
+.side-panel.collapsed .panel-tabs button.active::after { right: -8px; bottom: auto; width: 2px; height: 20px; }
+.side-panel.collapsed .panel-tabs .panel-collapse { order: -1; height: 34px; }
+.side-panel.collapsed .panel-body { display: none; }
 .panel-body { height: calc(100vh - 140px); display: flex; flex-direction: column; }
 .panel-title { display: flex; justify-content: space-between; align-items: center; padding: 25px 21px 14px; }
 .panel-title > div { display: grid; gap: 4px; }
@@ -288,6 +298,25 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 .member span { color: #797689; font-size: 8px; }
 .host-crown { color: #c2b1ff; }
 .member select { max-width: 82px; padding: 5px; border: 1px solid var(--line); border-radius: 6px; color: #b7b4c4; background: #191724; font-size: 8px; }
+.member-roster { min-width: 0; border-left: 1px solid var(--line); background: rgba(9,9,16,.9); overflow: hidden; }
+.roster-header { height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 16px; border-bottom: 1px solid var(--line); }
+.roster-header > div { display: flex; align-items: center; gap: 8px; }
+.roster-header svg { width: 16px; color: #89859a; }
+.roster-header strong { font: 600 13px 'Space Grotesk'; }
+.roster-header > span { color: #6f6b7c; font-size: 9px; }
+.roster-scroll { height: calc(100vh - 140px); padding: 13px 8px 22px; overflow-y: auto; }
+.roster-group + .roster-group { margin-top: 17px; }
+.roster-group h3 { margin: 0 9px 6px; color: #686474; font-size: 9px; font-weight: 700; letter-spacing: .8px; }
+.roster-member { position: relative; grid-template-columns: 35px minmax(0,1fr) auto; gap: 9px; padding: 7px 8px; }
+.roster-member .member-avatar { position: relative; width: 35px; height: 35px; border-radius: 50%; background: linear-gradient(145deg,#7651ca,#44317c); }
+.member-presence { position: absolute; right: -1px; bottom: -1px; width: 10px; height: 10px; border: 2px solid #0c0c14; border-radius: 50%; background: var(--success); }
+.roster-member .member-copy { min-width: 0; display: grid; gap: 2px; }
+.roster-member .member-copy strong, .roster-member .member-copy span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.roster-member .member-copy strong { color: #c9c6d3; font-size: 11px; }
+.roster-member .member-copy strong small { color: #777383; font-size: 8px; font-weight: 500; }
+.roster-member .member-copy span { color: #716d7d; font-size: 9px; }
+.roster-member .member-admin { display: none; grid-column: 2 / -1; justify-content: flex-end; padding-top: 3px; }
+.roster-member:hover .member-admin, .roster-member:focus-within .member-admin { display: flex; }
 .connection-banner { position: fixed; z-index: 70; top: 76px; left: 50%; display: flex; align-items: center; gap: 7px; padding: 8px 13px; border: 1px solid rgba(251,191,36,.25); border-top: 0; border-radius: 0 0 10px 10px; color: #f5d579; background: rgba(52,39,12,.96); box-shadow: 0 10px 30px rgba(0,0,0,.3); font-size: 11px; transform: translateX(-50%); }
 .toast { position: fixed; z-index: 90; right: 22px; bottom: 22px; max-width: min(390px,calc(100% - 28px)); display: flex; align-items: center; gap: 13px; padding: 12px 12px 12px 15px; border: 1px solid rgba(74,222,128,.22); border-radius: 12px; color: #d9fbe4; background: rgba(14,35,25,.96); box-shadow: 0 18px 55px rgba(0,0,0,.45); font-size: 12px; backdrop-filter: blur(16px); animation: toast-in .22s ease-out; }
 .toast.error { border-color: rgba(251,113,133,.24); color: #ffd9df; background: rgba(45,17,24,.96); }
@@ -466,7 +495,18 @@ button:disabled { opacity: .42; cursor: not-allowed; }
   .timeline-controls { height: 33px; }
   .room-note { display: none; }
   .side-panel { height: 100%; overflow: hidden; }
+  .member-roster { height: 100%; }
   .panel-body { height: calc(100dvh - 140px); }
+  .roster-scroll { height: calc(100dvh - 140px); }
+}
+
+@media (min-width: 1051px) and (max-width: 1400px) {
+  .room-shell { grid-template-columns: minmax(0,1fr) 350px 210px; }
+  .room-shell.panel-collapsed { grid-template-columns: minmax(0,1fr) 58px 210px; }
+  .player-column { padding-inline: 28px; }
+  .roster-header { padding-inline: 12px; }
+  .roster-header > span { display: none; }
+  .roster-member { grid-template-columns: 33px minmax(0,1fr) auto; padding-inline: 6px; }
 }
 
 @media (max-width: 1050px) {
@@ -476,7 +516,19 @@ button:disabled { opacity: .42; cursor: not-allowed; }
   .hero-points { justify-content: center; }
   .room-card { width: min(510px,100%); margin: auto; }
   .room-shell { grid-template-columns: 1fr; }
+  .room-shell.panel-collapsed { grid-template-columns: 1fr; }
   .side-panel { min-height: 560px; border-top: 1px solid var(--line); border-left: 0; }
+  .panel-tabs .panel-collapse { display: none; }
+  .side-panel.collapsed { min-height: 560px; }
+  .side-panel.collapsed .panel-tabs { height: 64px; grid-template-columns: repeat(2,1fr); gap: 0; padding: 8px 10px 0; border-bottom: 1px solid var(--line); }
+  .side-panel.collapsed .panel-tabs button { width: auto; height: auto; border-radius: 9px 9px 0 0; }
+  .side-panel.collapsed .panel-tabs button b, .side-panel.collapsed .panel-tabs button span { display: initial; }
+  .side-panel.collapsed .panel-tabs button.active::after { right: auto; bottom: -1px; width: 28px; height: 2px; }
+  .side-panel.collapsed .panel-body { display: flex; }
+  .member-roster { min-height: 220px; border-top: 1px solid var(--line); border-left: 0; }
+  .roster-scroll { height: auto; display: flex; gap: 12px; padding: 14px; overflow-x: auto; overflow-y: hidden; }
+  .roster-group { min-width: 245px; }
+  .roster-group + .roster-group { margin-top: 0; }
   .panel-body { height: 500px; }
   .room-header { grid-template-columns: auto 1fr; }
   .room-identity { margin-left: 20px; text-align: left; }

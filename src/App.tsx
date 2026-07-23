@@ -19,6 +19,8 @@ import {
   MessageCircle,
   Minimize2,
   Pause,
+  PanelRightClose,
+  PanelRightOpen,
   Play,
   Radio,
   RefreshCw,
@@ -305,7 +307,8 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [bans, setBans] = useState<BanRecord[]>([]);
   const [segments, setSegments] = useState<SponsorSegment[]>([]);
-  const [activePanel, setActivePanel] = useState<'queue' | 'chat' | 'people'>('queue');
+  const [activePanel, setActivePanel] = useState<'queue' | 'chat'>('queue');
+  const [sidePanelCollapsed, setSidePanelCollapsed] = useState(() => localStorage.getItem('syncbox:side-panel-collapsed') === '1');
   const [chatText, setChatText] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -344,10 +347,35 @@ function RoomPage({ roomId }: { roomId: string }) {
   const sponsorCategoryKey = meta?.sponsorCategories.join(',') ?? 'sponsor';
   const loopMode: LoopMode = meta?.loopMode ?? 'off';
   const queueDuration = useMemo(() => queue.reduce((total, item) => total + (item.duration ?? 0), 0), [queue]);
+  const memberGroups = useMemo(() => {
+    const groups = [
+      { key: 'owner', label: 'OWNER', members: members.filter((member) => member.uid === meta?.hostUid) },
+      { key: 'cohost', label: 'CO-HOST', members: members.filter((member) => member.uid !== meta?.hostUid && Boolean(meta?.coHosts?.[member.uid])) },
+      { key: 'dj', label: 'DJ', members: members.filter((member) => member.uid !== meta?.hostUid && !meta?.coHosts?.[member.uid] && member.role === 'dj') },
+      { key: 'listener', label: 'LISTENER', members: members.filter((member) => member.uid !== meta?.hostUid && !meta?.coHosts?.[member.uid] && member.role !== 'dj') },
+    ];
+    return groups.filter((group) => group.members.length > 0);
+  }, [members, meta?.coHosts, meta?.hostUid]);
 
   function showNotice(message: string, tone: 'success' | 'error' = 'success') {
     setNotice({ message, tone });
     window.setTimeout(() => setNotice(null), 2600);
+  }
+
+  function toggleSidePanel() {
+    setSidePanelCollapsed((collapsed) => {
+      const next = !collapsed;
+      localStorage.setItem('syncbox:side-panel-collapsed', next ? '1' : '0');
+      return next;
+    });
+  }
+
+  function openSidePanel(panel: 'queue' | 'chat') {
+    setActivePanel(panel);
+    if (sidePanelCollapsed) {
+      setSidePanelCollapsed(false);
+      localStorage.setItem('syncbox:side-panel-collapsed', '0');
+    }
   }
 
   useEffect(() => {
@@ -912,7 +940,7 @@ function RoomPage({ roomId }: { roomId: string }) {
       {connected === false && <div className="connection-banner"><WifiOff size={15} /> Mất kết nối — đang thử kết nối lại…</div>}
       {notice && <div className={`toast ${notice.tone}`}><span>{notice.message}</span><button onClick={() => setNotice(null)}><X size={14} /></button></div>}
 
-      <div className="room-shell">
+      <div className={`room-shell ${sidePanelCollapsed ? 'panel-collapsed' : ''}`}>
         <section className="player-column">
           <SearchPanel canAdd={Boolean(canAdd)} onAdd={addToQueue} />
 
@@ -1003,11 +1031,13 @@ function RoomPage({ roomId }: { roomId: string }) {
           <div className="room-note"><ShieldCheck size={15} /><span>Video được phát trực tiếp từ YouTube. Syncbox chỉ đồng bộ trạng thái phòng.</span></div>
         </section>
 
-        <aside className="side-panel">
+        <aside className={`side-panel ${sidePanelCollapsed ? 'collapsed' : ''}`}>
           <div className="panel-tabs">
-            <button className={activePanel === 'queue' ? 'active' : ''} onClick={() => setActivePanel('queue')}><ListMusic /> Queue <span>{queue.length}</span></button>
-            <button className={activePanel === 'chat' ? 'active' : ''} onClick={() => setActivePanel('chat')}><MessageCircle /> Chat {messages.length > 0 && <span>{messages.length}</span>}</button>
-            <button className={activePanel === 'people' ? 'active' : ''} onClick={() => setActivePanel('people')}><Users /> Người</button>
+            <button className={activePanel === 'queue' ? 'active' : ''} title="Queue" onClick={() => openSidePanel('queue')}><ListMusic /><b>Queue</b><span>{queue.length}</span></button>
+            <button className={activePanel === 'chat' ? 'active' : ''} title="Chat" onClick={() => openSidePanel('chat')}><MessageCircle /><b>Chat</b>{messages.length > 0 && <span>{messages.length}</span>}</button>
+            <button className="panel-collapse" title={sidePanelCollapsed ? 'Mở Queue và Chat' : 'Thu gọn Queue và Chat'} aria-label={sidePanelCollapsed ? 'Mở Queue và Chat' : 'Thu gọn Queue và Chat'} onClick={toggleSidePanel}>
+              {sidePanelCollapsed ? <PanelRightOpen /> : <PanelRightClose />}
+            </button>
           </div>
 
           {activePanel === 'queue' && (
@@ -1066,28 +1096,43 @@ function RoomPage({ roomId }: { roomId: string }) {
             </div>
           )}
 
-          {activePanel === 'people' && (
-            <div className="panel-body people-panel">
-              <div className="panel-title"><div><strong>Trong phòng</strong><span>{members.length} người đang online</span></div></div>
-              {members.map((member) => (
-                <article className="member" key={member.uid}>
-                  <div className="member-avatar">{member.name.slice(0, 1).toUpperCase()}</div>
-                  <div><strong>{member.name} {member.uid === uid && '(bạn)'}</strong><span>{member.uid === meta.hostUid ? 'Owner' : meta.coHosts?.[member.uid] ? 'Co-host' : member.role === 'dj' ? 'DJ' : 'Listener'}</span></div>
-                  {member.uid === meta.hostUid ? <Crown className="host-crown" size={18} /> : meta.coHosts?.[member.uid] ? (
-                    isOwner ? <button className="cohost-button active" title="Thu hồi quyền Co-host" onClick={() => void setCoHost(member, false)}><ShieldCheck size={15} /></button> : <ShieldCheck className="cohost-mark" size={18} />
-                  ) : isHost ? (
-                    <div className="member-admin">
-                      {isOwner && <button title="Thêm Co-host" onClick={() => void setCoHost(member, true)}><ShieldCheck size={14} /></button>}
-                      {isOwner && <button title="Chuyển quyền Owner" onClick={() => void handOffHost(member)}><Crown size={14} /></button>}
-                      <RolePicker value={member.role === 'dj' ? 'dj' : 'listener'} onChange={(role) => void updateMemberRole(roomId, member.uid, role as Role).then(() => showNotice(`Đã cập nhật quyền của ${member.name}.`)).catch((cause) => showNotice(cause instanceof Error ? cause.message : 'Không thể cập nhật quyền.', 'error'))} />
-                      {canModerate(member) && <button className="moderation-button" title="Đưa khỏi phòng" onClick={() => void handleKick(member)}><UserMinus size={14} /></button>}
-                      {canModerate(member) && <button className="moderation-button ban" title="Cấm khỏi phòng" onClick={() => void handleBan(member)}><Ban size={14} /></button>}
+        </aside>
+
+        <aside className="member-roster" aria-label="Thành viên trong phòng">
+          <div className="roster-header">
+            <div><Users /><strong>Thành viên</strong></div>
+            <span>{members.length} online</span>
+          </div>
+          <div className="roster-scroll">
+            {memberGroups.map((group) => (
+              <section className="roster-group" key={group.key}>
+                <h3>{group.label} — {group.members.length}</h3>
+                {group.members.map((member) => (
+                  <article className="member roster-member" key={member.uid}>
+                    <div className="member-avatar">
+                      {member.name.slice(0, 1).toUpperCase()}
+                      <i className="member-presence" />
                     </div>
-                  ) : <i className="member-online" />}
-                </article>
-              ))}
-            </div>
-          )}
+                    <div className="member-copy">
+                      <strong>{member.name} {member.uid === uid && <small>(bạn)</small>}</strong>
+                      <span>{member.uid === meta.hostUid ? 'Owner phòng' : meta.coHosts?.[member.uid] ? 'Co-host' : member.role === 'dj' ? 'DJ' : 'Đang nghe'}</span>
+                    </div>
+                    {member.uid === meta.hostUid ? <Crown className="host-crown" size={17} /> : meta.coHosts?.[member.uid] ? (
+                      isOwner ? <button className="cohost-button active" title="Thu hồi quyền Co-host" onClick={() => void setCoHost(member, false)}><ShieldCheck size={15} /></button> : <ShieldCheck className="cohost-mark" size={17} />
+                    ) : isHost ? (
+                      <div className="member-admin">
+                        {isOwner && <button title="Thêm Co-host" onClick={() => void setCoHost(member, true)}><ShieldCheck size={14} /></button>}
+                        {isOwner && <button title="Chuyển quyền Owner" onClick={() => void handOffHost(member)}><Crown size={14} /></button>}
+                        <RolePicker value={member.role === 'dj' ? 'dj' : 'listener'} onChange={(role) => void updateMemberRole(roomId, member.uid, role as Role).then(() => showNotice(`Đã cập nhật quyền của ${member.name}.`)).catch((cause) => showNotice(cause instanceof Error ? cause.message : 'Không thể cập nhật quyền.', 'error'))} />
+                        {canModerate(member) && <button className="moderation-button" title="Đưa khỏi phòng" onClick={() => void handleKick(member)}><UserMinus size={14} /></button>}
+                        {canModerate(member) && <button className="moderation-button ban" title="Cấm khỏi phòng" onClick={() => void handleBan(member)}><Ban size={14} /></button>}
+                      </div>
+                    ) : <i className="member-online" />}
+                  </article>
+                ))}
+              </section>
+            ))}
+          </div>
         </aside>
       </div>
 
