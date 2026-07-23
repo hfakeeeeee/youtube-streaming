@@ -14,6 +14,7 @@ export interface PlayerHandle {
   currentTime: () => number;
   duration: () => number;
   state: () => number;
+  videoId: () => string;
   setVolume: (volume: number) => void;
   activate: () => void;
 }
@@ -25,6 +26,7 @@ interface Props {
   onCued?: (videoId: string) => void;
   onPlaying?: (videoId: string) => void;
   onEnded?: () => void;
+  onError?: (code: number) => void;
   onAutoplayBlocked?: () => void;
 }
 
@@ -58,20 +60,20 @@ function buildEmbedUrl(videoId: string | undefined, startSeconds: number): strin
     origin: window.location.origin,
   });
   if (startSeconds > 0) params.set('start', String(Math.floor(startSeconds)));
-  return `https://www.youtube.com/embed/${encodeURIComponent(videoId ?? '')}?${params}`;
+  return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId ?? '')}?${params}`;
 }
 
 export const YouTubePlayer = forwardRef<PlayerHandle, Props>(function YouTubePlayer(
-  { videoId, startSeconds = 0, onReady, onCued, onPlaying, onEnded, onAutoplayBlocked },
+  { videoId, startSeconds = 0, onReady, onCued, onPlaying, onEnded, onError, onAutoplayBlocked },
   forwardedRef,
 ) {
   const mountRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<any>(null);
   const iframeId = useRef(`syncbox-youtube-${Math.random().toString(36).slice(2)}`).current;
-  const latestCallbacks = useRef({ onReady, onCued, onPlaying, onEnded, onAutoplayBlocked });
+  const latestCallbacks = useRef({ onReady, onCued, onPlaying, onEnded, onError, onAutoplayBlocked });
   const initialVideo = useRef({ videoId, startSeconds });
   const [ready, setReady] = useState(false);
-  latestCallbacks.current = { onReady, onCued, onPlaying, onEnded, onAutoplayBlocked };
+  latestCallbacks.current = { onReady, onCued, onPlaying, onEnded, onError, onAutoplayBlocked };
 
   useImperativeHandle(forwardedRef, () => ({
     play: () => playerRef.current?.playVideo?.(),
@@ -80,6 +82,7 @@ export const YouTubePlayer = forwardRef<PlayerHandle, Props>(function YouTubePla
     currentTime: () => Number(playerRef.current?.getCurrentTime?.() ?? 0),
     duration: () => Number(playerRef.current?.getDuration?.() ?? 0),
     state: () => Number(playerRef.current?.getPlayerState?.() ?? -1),
+    videoId: () => String(playerRef.current?.getVideoData?.()?.video_id ?? ''),
     setVolume: (volume) => playerRef.current?.setVolume?.(Math.min(100, Math.max(0, volume))),
     activate: () => {
       playerRef.current?.unMute?.();
@@ -130,6 +133,7 @@ export const YouTubePlayer = forwardRef<PlayerHandle, Props>(function YouTubePla
             }
             if (event.data === YT.PlayerState.ENDED) latestCallbacks.current.onEnded?.();
           },
+          onError: (event: { data: number }) => latestCallbacks.current.onError?.(Number(event.data)),
           onAutoplayBlocked: () => latestCallbacks.current.onAutoplayBlocked?.(),
         },
       });

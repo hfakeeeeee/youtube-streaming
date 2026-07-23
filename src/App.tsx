@@ -21,6 +21,7 @@ import {
   Pause,
   Play,
   Radio,
+  RefreshCw,
   Repeat2,
   Search,
   Settings2,
@@ -321,6 +322,8 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [settingsSponsorEnabled, setSettingsSponsorEnabled] = useState(false);
   const [settingsSponsorCategories, setSettingsSponsorCategories] = useState<string[]>([]);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [playerAttempt, setPlayerAttempt] = useState(0);
+  const [playerIssue, setPlayerIssue] = useState('');
   const [draggedQueueId, setDraggedQueueId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ queueId: string; position: 'before' | 'after' } | null>(null);
   const [undoQueue, setUndoQueue] = useState<{ items: QueueItem[]; label: string } | null>(null);
@@ -328,6 +331,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   const videoStageRef = useRef<HTMLDivElement>(null);
   const lastSponsorSkip = useRef('');
   const pendingQueueStart = useRef<string | null>(null);
+  const handledEndedRevision = useRef(0);
   const undoTimer = useRef<number | undefined>(undefined);
 
   const me = useMemo(() => members.find((member) => member.uid === uid), [members, uid]);
@@ -461,7 +465,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     player.setVolume(localVolume);
     // The client that selected the track is deliberately pre-rolling its local
     // iframe while Firebase remains paused at zero. Do not pause that pre-roll.
-    if (pendingQueueStart.current === playback.video.id && playback.reason === 'queue') return;
+    if (playback.status === 'paused' && playback.reason === 'queue' && canControlPlayback) return;
     if (playback.status === 'playing') {
       if (Math.abs(actual - expected) > 1.5) player.seek(expected);
       player.play();
@@ -471,7 +475,40 @@ function RoomPage({ roomId }: { roomId: string }) {
       player.pause();
       if (Math.abs(actual - expected) > 0.25) player.seek(expected);
     }
-  }, [localVolume, playback, serverOffset]);
+  }, [canControlPlayback, localVolume, playback, serverOffset]);
+
+  useEffect(() => {
+    setNeedsActivation(false);
+    setPlayerIssue('');
+    if (!playback.video) return;
+
+    const shouldStartQueue = playback.status === 'paused' && playback.reason === 'queue' && canControlPlayback;
+    if (shouldStartQueue) pendingQueueStart.current = playback.video.id;
+    let attempts = 0;
+    const retry = () => {
+      if (!shouldStartQueue) return;
+      const player = playerRef.current;
+      if (!player || player.videoId() !== playback.video?.id) return;
+      attempts += 1;
+      player.seek(0);
+      player.play();
+      if (attempts >= 3) setNeedsActivation(true);
+    };
+    const firstRetry = window.setTimeout(retry, 700);
+    const retryTimer = window.setInterval(retry, 1800);
+    const issueTimer = window.setTimeout(() => {
+      const player = playerRef.current;
+      const healthy = Boolean(player && player.videoId() === playback.video?.id && player.state() === 1);
+      if (!healthy && (playback.status === 'playing' || playback.reason === 'queue')) {
+        setPlayerIssue('Player chưa thể tải hoặc phát video. Mạng đang dùng có thể đang chặn YouTube.');
+      }
+    }, 12000);
+    return () => {
+      window.clearTimeout(firstRetry);
+      window.clearInterval(retryTimer);
+      window.clearTimeout(issueTimer);
+    };
+  }, [canControlPlayback, playback.reason, playback.revision, playback.status, playback.video]);
 
   useEffect(() => {
     const timer = window.setTimeout(conformPlayer, 250);
@@ -699,22 +736,48 @@ function RoomPage({ roomId }: { roomId: string }) {
   }
 
   const handlePlayerCued = useCallback((videoId: string) => {
-    if (pendingQueueStart.current !== videoId) return;
+    if (
+      playback.video?.id !== videoId
+      || playback.status !== 'paused'
+      || playback.reason !== 'queue'
+      || !canControlPlayback
+    ) return;
+    pendingQueueStart.current = videoId;
     // Start only this local iframe first. The shared room clock must remain
     // paused until YouTube confirms that media is actually playing.
     playerRef.current?.seek(0);
     playerRef.current?.play();
-  }, []);
+  }, [canControlPlayback, playback.reason, playback.status, playback.video?.id]);
 
   const handlePlayerPlaying = useCallback((videoId: string) => {
-    if (pendingQueueStart.current !== videoId) return;
+    if (playback.video?.id !== videoId) return;
+    setNeedsActivation(false);
+    setPlayerIssue('');
+    if (playback.status !== 'paused' || playback.reason !== 'queue' || !canControlPlayback) return;
     pendingQueueStart.current = null;
     // Rebase at zero at the moment playback truly starts. CUED only means the
     // metadata is ready and may still be followed by several seconds of buffer.
     void writePlayback(roomId, uid, { status: 'playing', position: 0, reason: 'queue' }).catch((cause) => {
       showNotice(cause instanceof Error ? cause.message : 'Không thể bắt đầu video.', 'error');
     });
-  }, [roomId, uid]);
+  }, [canControlPlayback, playback.reason, playback.status, playback.video?.id, roomId, uid]);
+
+  function handlePlayerEnded() {
+    if (!canControlPlayback || handledEndedRevision.current === playback.revision) return;
+    handledEndedRevision.current = playback.revision;
+    void skip(loopMode).catch((cause) => {
+      showNotice(cause instanceof Error ? cause.message : 'Không thể tự chuyển bài.', 'error');
+    });
+  }
+
+  function retryPlayer() {
+    setPlayerIssue('');
+    setNeedsActivation(false);
+    if (playback.status === 'paused' && playback.reason === 'queue' && playback.video) {
+      pendingQueueStart.current = playback.video.id;
+    }
+    setPlayerAttempt((attempt) => attempt + 1);
+  }
 
   async function submitChat(event: FormEvent) {
     event.preventDefault();
@@ -856,20 +919,33 @@ function RoomPage({ roomId }: { roomId: string }) {
           <div className="video-stage" ref={videoStageRef}>
             {playback.video ? (
               <YouTubePlayer
+                key={`${playback.video.id}:${playerAttempt}`}
                 ref={playerRef}
                 videoId={playback.video.id}
                 startSeconds={expectedPosition(playback, serverOffset)}
                 onReady={conformPlayer}
                 onCued={handlePlayerCued}
                 onPlaying={handlePlayerPlaying}
-                onEnded={() => { if (isOwner) void skip(loopMode); }}
+                onEnded={handlePlayerEnded}
+                onError={(code) => setPlayerIssue(`YouTube không thể phát video này (mã lỗi ${code}).`)}
                 onAutoplayBlocked={() => setNeedsActivation(true)}
               />
             ) : (
               <div className="empty-player"><div><ListMusic size={34} /><span>Queue đang trống</span><small>Dán một link YouTube để bắt đầu.</small></div></div>
             )}
             {needsActivation && playback.video && (
-              <button className="activation-overlay" onClick={() => { playerRef.current?.activate(); setNeedsActivation(false); }}><Volume2 /> Bật âm thanh trên thiết bị này</button>
+              <button className="activation-overlay" onClick={() => { playerRef.current?.activate(); setNeedsActivation(false); }}><Volume2 /> Bấm để tiếp tục phát</button>
+            )}
+            {playerIssue && playback.video && (
+              <div className="player-recovery">
+                <WifiOff />
+                <strong>Không tải được video</strong>
+                <span>{playerIssue}</span>
+                <div>
+                  <button onClick={retryPlayer}><RefreshCw /> Tải lại player</button>
+                  <a href={`https://www.youtube.com/watch?v=${encodeURIComponent(playback.video.id)}`} target="_blank" rel="noreferrer">Mở trên YouTube</a>
+                </div>
+              </div>
             )}
             {playback.reason === 'sponsorblock' && <div className="skip-toast"><Sparkles size={15} /> Đã bỏ qua sponsor</div>}
             <button className="fullscreen-button" title={fullscreen ? 'Thoát toàn màn hình' : 'Toàn màn hình'} aria-label={fullscreen ? 'Thoát toàn màn hình' : 'Mở toàn màn hình'} onClick={() => void toggleFullscreen()} disabled={!playback.video}>
