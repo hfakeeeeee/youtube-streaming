@@ -354,6 +354,8 @@ function RoomPage({ roomId }: { roomId: string }) {
   const lastSponsorSkip = useRef('');
   const pendingQueueStart = useRef<string | null>(null);
   const handledEndedRevision = useRef(0);
+  const playerRecovery = useRef({ videoId: '', attempts: 0 });
+  const nonRetryablePlayerVideo = useRef('');
   const undoTimer = useRef<number | undefined>(undefined);
   const voiceClientRef = useRef<VoiceClient | null>(null);
 
@@ -576,6 +578,10 @@ function RoomPage({ roomId }: { roomId: string }) {
     setNeedsActivation(false);
     setPlayerIssue('');
     if (!playback.video) return;
+    if (playerRecovery.current.videoId !== playback.video.id) {
+      playerRecovery.current = { videoId: playback.video.id, attempts: 0 };
+      nonRetryablePlayerVideo.current = '';
+    }
 
     const shouldStartQueue = playback.status === 'paused' && playback.reason === 'queue' && canControlPlayback;
     if (shouldStartQueue) pendingQueueStart.current = playback.video.id;
@@ -591,23 +597,46 @@ function RoomPage({ roomId }: { roomId: string }) {
     };
     const firstRetry = window.setTimeout(retry, 700);
     const retryTimer = window.setInterval(retry, 1800);
+    const recoveryDelay = playerRecovery.current.attempts === 0 ? 10000 : 18000;
     const issueTimer = window.setTimeout(() => {
       const player = playerRef.current;
       const healthy = Boolean(player && player.videoId() === playback.video?.id && player.state() === 1);
       if (!healthy && (playback.status === 'playing' || playback.reason === 'queue')) {
-        setPlayerIssue('Player chưa thể tải hoặc phát video. Mạng đang dùng có thể đang chặn YouTube.');
+        const videoId = playback.video?.id ?? '';
+        const recovery = playerRecovery.current;
+        if (nonRetryablePlayerVideo.current === videoId) return;
+        if (videoId && recovery.videoId === videoId && recovery.attempts < 2) {
+          recovery.attempts += 1;
+          if (playback.status === 'paused' && playback.reason === 'queue' && canControlPlayback) pendingQueueStart.current = videoId;
+          setPlayerAttempt((attempt) => attempt + 1);
+          return;
+        }
+        setPlayerIssue('Player chưa thể tải hoặc phát video sau khi đã tự khôi phục. Mạng đang dùng có thể đang chặn YouTube.');
       }
-    }, 12000);
+    }, recoveryDelay);
     return () => {
       window.clearTimeout(firstRetry);
       window.clearInterval(retryTimer);
       window.clearTimeout(issueTimer);
     };
-  }, [canControlPlayback, playback.reason, playback.revision, playback.status, playback.video]);
+  }, [canControlPlayback, playback.reason, playback.revision, playback.status, playback.video, playerAttempt]);
 
   useEffect(() => {
+    conformPlayer();
     const timer = window.setTimeout(conformPlayer, 250);
     return () => window.clearTimeout(timer);
+  }, [conformPlayer]);
+
+  useEffect(() => {
+    const recoverPlayback = () => {
+      if (document.visibilityState === 'visible') conformPlayer();
+    };
+    document.addEventListener('visibilitychange', recoverPlayback);
+    window.addEventListener('pageshow', recoverPlayback);
+    return () => {
+      document.removeEventListener('visibilitychange', recoverPlayback);
+      window.removeEventListener('pageshow', recoverPlayback);
+    };
   }, [conformPlayer]);
 
   useEffect(() => {
@@ -846,6 +875,8 @@ function RoomPage({ roomId }: { roomId: string }) {
 
   const handlePlayerPlaying = useCallback((videoId: string) => {
     if (playback.video?.id !== videoId) return;
+    playerRecovery.current = { videoId, attempts: 0 };
+    nonRetryablePlayerVideo.current = '';
     setNeedsActivation(false);
     setPlayerIssue('');
     if (playback.status !== 'paused' || playback.reason !== 'queue' || !canControlPlayback) return;
@@ -866,12 +897,23 @@ function RoomPage({ roomId }: { roomId: string }) {
   }
 
   function retryPlayer() {
+    if (playback.video) {
+      playerRecovery.current = { videoId: playback.video.id, attempts: 0 };
+      nonRetryablePlayerVideo.current = '';
+    }
     setPlayerIssue('');
     setNeedsActivation(false);
     if (playback.status === 'paused' && playback.reason === 'queue' && playback.video) {
       pendingQueueStart.current = playback.video.id;
     }
     setPlayerAttempt((attempt) => attempt + 1);
+  }
+
+  function handlePlayerError(code: number) {
+    if (playback.video && [2, 100, 101, 150, 153].includes(code)) {
+      nonRetryablePlayerVideo.current = playback.video.id;
+    }
+    setPlayerIssue(`YouTube không thể phát video này (mã lỗi ${code}).`);
   }
 
   async function submitChat(event: FormEvent) {
@@ -1084,15 +1126,16 @@ function RoomPage({ roomId }: { roomId: string }) {
           <div className="video-stage" ref={videoStageRef}>
             {playback.video ? (
               <YouTubePlayer
-                key={`${playback.video.id}:${playerAttempt}`}
+                key={playerAttempt}
                 ref={playerRef}
                 videoId={playback.video.id}
                 startSeconds={expectedPosition(playback, serverOffset)}
+                autoPlay={playback.status === 'playing' || (playback.reason === 'queue' && canControlPlayback)}
                 onReady={conformPlayer}
                 onCued={handlePlayerCued}
                 onPlaying={handlePlayerPlaying}
                 onEnded={handlePlayerEnded}
-                onError={(code) => setPlayerIssue(`YouTube không thể phát video này (mã lỗi ${code}).`)}
+                onError={handlePlayerError}
                 onAutoplayBlocked={() => setNeedsActivation(true)}
               />
             ) : (

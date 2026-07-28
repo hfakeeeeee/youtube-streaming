@@ -22,6 +22,7 @@ export interface PlayerHandle {
 interface Props {
   videoId?: string;
   startSeconds?: number;
+  autoPlay?: boolean;
   onReady?: () => void;
   onCued?: (videoId: string) => void;
   onPlaying?: (videoId: string) => void;
@@ -64,7 +65,7 @@ function buildEmbedUrl(videoId: string | undefined, startSeconds: number): strin
 }
 
 export const YouTubePlayer = forwardRef<PlayerHandle, Props>(function YouTubePlayer(
-  { videoId, startSeconds = 0, onReady, onCued, onPlaying, onEnded, onError, onAutoplayBlocked },
+  { videoId, startSeconds = 0, autoPlay = false, onReady, onCued, onPlaying, onEnded, onError, onAutoplayBlocked },
   forwardedRef,
 ) {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -72,8 +73,10 @@ export const YouTubePlayer = forwardRef<PlayerHandle, Props>(function YouTubePla
   const iframeId = useRef(`syncbox-youtube-${Math.random().toString(36).slice(2)}`).current;
   const latestCallbacks = useRef({ onReady, onCued, onPlaying, onEnded, onError, onAutoplayBlocked });
   const initialVideo = useRef({ videoId, startSeconds });
+  const latestStartSeconds = useRef(startSeconds);
   const [ready, setReady] = useState(false);
   latestCallbacks.current = { onReady, onCued, onPlaying, onEnded, onError, onAutoplayBlocked };
+  latestStartSeconds.current = startSeconds;
 
   useImperativeHandle(forwardedRef, () => ({
     play: () => playerRef.current?.playVideo?.(),
@@ -149,8 +152,15 @@ export const YouTubePlayer = forwardRef<PlayerHandle, Props>(function YouTubePla
   useEffect(() => {
     if (!ready || !videoId) return;
     const loadedId = playerRef.current?.getVideoData?.()?.video_id;
-    if (loadedId !== videoId) playerRef.current?.cueVideoById?.({ videoId, startSeconds });
-  }, [ready, videoId, startSeconds]);
+    if (loadedId !== videoId) {
+      const nextStart = latestStartSeconds.current;
+      if (autoPlay) playerRef.current?.loadVideoById?.({ videoId, startSeconds: nextStart });
+      else playerRef.current?.cueVideoById?.({ videoId, startSeconds: nextStart });
+      return;
+    }
+    const state = Number(playerRef.current?.getPlayerState?.() ?? -1);
+    if (autoPlay && state !== 1 && state !== 3) playerRef.current?.playVideo?.();
+  }, [autoPlay, ready, videoId]);
 
   return <div className="youtube-player" ref={mountRef} aria-label="YouTube player" />;
 });
