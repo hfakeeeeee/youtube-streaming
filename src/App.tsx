@@ -322,6 +322,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [segments, setSegments] = useState<SponsorSegment[]>([]);
   const [activePanel, setActivePanel] = useState<'queue' | 'chat'>('queue');
   const [sidePanelCollapsed, setSidePanelCollapsed] = useState(() => localStorage.getItem('syncbox:side-panel-collapsed') === '1');
+  const [rosterCollapsed, setRosterCollapsed] = useState(() => localStorage.getItem('syncbox:roster-collapsed') === '1');
   const [chatText, setChatText] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -382,6 +383,14 @@ function RoomPage({ roomId }: { roomId: string }) {
     setSidePanelCollapsed((collapsed) => {
       const next = !collapsed;
       localStorage.setItem('syncbox:side-panel-collapsed', next ? '1' : '0');
+      return next;
+    });
+  }
+
+  function toggleRoster() {
+    setRosterCollapsed((collapsed) => {
+      const next = !collapsed;
+      localStorage.setItem('syncbox:roster-collapsed', next ? '1' : '0');
       return next;
     });
   }
@@ -1034,7 +1043,7 @@ function RoomPage({ roomId }: { roomId: string }) {
       {connected === false && <div className="connection-banner"><WifiOff size={15} /> Mất kết nối — đang thử kết nối lại…</div>}
       {notice && <div className={`toast ${notice.tone}`}><span>{notice.message}</span><button onClick={() => setNotice(null)}><X size={14} /></button></div>}
 
-      <div className={`room-shell ${sidePanelCollapsed ? 'panel-collapsed' : ''}`}>
+      <div className={`room-shell ${sidePanelCollapsed ? 'panel-collapsed' : ''} ${rosterCollapsed ? 'roster-collapsed' : ''}`}>
         <section className="player-column">
           <SearchPanel canAdd={Boolean(canAdd)} onAdd={addToQueue} />
 
@@ -1077,7 +1086,11 @@ function RoomPage({ roomId }: { roomId: string }) {
 
           <div className="now-playing">
             <div className="track-art">{playback.video ? <img src={playback.video.thumbnail} alt="" /> : <ListMusic />}</div>
-            <div className="track-copy"><span>ĐANG PHÁT</span><strong>{playback.video?.title ?? 'Chưa có video'}</strong><small>{playback.video?.channel ?? 'Thêm bài đầu tiên vào queue'}</small></div>
+            <div className="track-copy">
+              <span>ĐANG PHÁT</span>
+              <strong title={playback.video?.title}>{playback.video?.title ?? 'Chưa có video'}</strong>
+              <small title={playback.video?.channel}>{playback.video?.channel ?? 'Thêm bài đầu tiên vào queue'}</small>
+            </div>
             <div className="room-controls">
               <button className="control-main" onClick={() => void control(playback.status === 'playing' ? 'paused' : 'playing')} disabled={!canControlPlayback || !playback.video || controlBusy}>
                 {controlBusy ? <LoaderCircle className="spin" /> : playback.status === 'playing' ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}
@@ -1160,7 +1173,11 @@ function RoomPage({ roomId }: { roomId: string }) {
                       <img src={item.thumbnail} alt="" />
                       <span>{playback.video?.id === item.id ? <Volume2 size={16} /> : index + 1}</span>
                     </button>
-                    <div><strong>{item.title}</strong><span>{item.channel}</span><small>thêm bởi {item.addedByName} {item.duration ? `· ${formatDuration(item.duration)}` : ''}</small></div>
+                    <div className="queue-copy">
+                      <strong title={item.title}>{item.title}</strong>
+                      <span title={item.channel}>{item.channel}</span>
+                      <small title={`Thêm bởi ${item.addedByName}${item.duration ? ` · ${formatDuration(item.duration)}` : ''}`}>thêm bởi <b>{item.addedByName}</b> {item.duration ? `· ${formatDuration(item.duration)}` : ''}</small>
+                    </div>
                     <div className="queue-item-actions">
                       <button className={`queue-vote ${item.votes?.[uid] ? 'active' : ''}`} title="Bình chọn bài này" onClick={() => void toggleQueueVote(roomId, item.queueId, uid, Boolean(item.votes?.[uid])).catch((cause) => showNotice(cause instanceof Error ? cause.message : 'Không thể bình chọn.', 'error'))}><ThumbsUp size={13} /><span>{Object.keys(item.votes ?? {}).length || ''}</span></button>
                       {canManageQueue && <span className="queue-move-buttons"><button title="Đưa lên" disabled={index === 0} onClick={() => void moveQueueBy(item.queueId, -1)}><ArrowUp size={12} /></button><button title="Đưa xuống" disabled={index === queue.length - 1} onClick={() => void moveQueueBy(item.queueId, 1)}><ArrowDown size={12} /></button></span>}
@@ -1192,10 +1209,13 @@ function RoomPage({ roomId }: { roomId: string }) {
 
         </aside>
 
-        <aside className="member-roster" aria-label="Thành viên trong phòng">
+        <aside className={`member-roster ${rosterCollapsed ? 'collapsed' : ''}`} aria-label="Thành viên trong phòng">
           <div className="roster-header">
             <div><Users /><strong>Thành viên</strong></div>
             <span>{members.length} online</span>
+            <button className="roster-collapse" title={rosterCollapsed ? 'Mở danh sách thành viên' : 'Thu gọn danh sách thành viên'} aria-label={rosterCollapsed ? 'Mở danh sách thành viên' : 'Thu gọn danh sách thành viên'} onClick={toggleRoster}>
+              {rosterCollapsed ? <PanelRightOpen /> : <PanelRightClose />}
+            </button>
           </div>
           <section className={`voice-card ${voiceJoined ? 'joined' : ''}`}>
             <div className="voice-heading">
@@ -1230,6 +1250,17 @@ function RoomPage({ roomId }: { roomId: string }) {
                 </button>
               </div>
             )}
+            {voicePresences.length > 0 && (
+              <div className="voice-participants" aria-label={`${voicePresences.length} người đang trong voice`}>
+                {voicePresences.map((presence) => (
+                  <div className={`voice-participant ${speakingUids.has(presence.uid) ? 'speaking' : ''}`} key={presence.uid} title={`${presence.name}${presence.muted ? ' · Đang tắt mic' : ' · Đang trong voice'}`}>
+                    <i>{presence.name.slice(0, 1).toUpperCase()}</i>
+                    <span>{presence.name}{presence.uid === uid ? ' (bạn)' : ''}</span>
+                    {presence.muted ? <MicOff /> : <Mic />}
+                  </div>
+                ))}
+              </div>
+            )}
             {voiceError && (
               <button className="voice-error" onClick={() => void joinVoice()}>
                 <RefreshCw /><span>{voiceError}</span><b>Thử lại</b>
@@ -1241,7 +1272,7 @@ function RoomPage({ roomId }: { roomId: string }) {
               <section className="roster-group" key={group.key}>
                 <h3>{group.label} — {group.members.length}</h3>
                 {group.members.map((member) => (
-                  <article className={`member roster-member ${speakingUids.has(member.uid) ? 'speaking' : ''}`} key={member.uid}>
+                  <article className={`member roster-member ${speakingUids.has(member.uid) ? 'speaking' : ''}`} key={member.uid} title={`${member.name}${voiceByUid.has(member.uid) ? ' · Trong voice' : ''}`}>
                     <div className={`member-avatar ${voiceByUid.has(member.uid) ? 'in-voice' : ''}`}>
                       {member.name.slice(0, 1).toUpperCase()}
                       <i className="member-presence" />
