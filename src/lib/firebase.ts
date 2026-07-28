@@ -159,6 +159,17 @@ export function setMemberOnline(roomId: string, uid: string, online: boolean): P
   return update(ref(db, `rooms/${roomId}/members/${uid}`), { online });
 }
 
+export function updateDisplayName(roomId: string, uid: string, displayName: string, inVoice: boolean): Promise<void> {
+  const { db } = requireFirebase();
+  const name = displayName.trim().slice(0, 32);
+  if (!name) return Promise.reject(new Error('Tên hiển thị không được để trống.'));
+  const changes: Record<string, string> = {
+    [`rooms/${roomId}/members/${uid}/name`]: name,
+  };
+  if (inVoice) changes[`rooms/${roomId}/voice/${uid}/name`] = name;
+  return update(ref(db), changes);
+}
+
 export function leaveRoom(roomId: string, uid: string): Promise<void> {
   const { db } = requireFirebase();
   return remove(ref(db, `rooms/${roomId}/members/${uid}`));

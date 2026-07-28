@@ -23,6 +23,7 @@ import {
   Pause,
   PanelRightClose,
   PanelRightOpen,
+  Pencil,
   Play,
   Radio,
   RefreshCw,
@@ -79,6 +80,7 @@ import {
   unbanMember,
   updateMemberRole,
   updateCoHost,
+  updateDisplayName,
   updateRoomMeta,
   updateVoiceMuted,
   writePlayback,
@@ -336,6 +338,9 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [serverOffset, setServerOffset] = useState(0);
   const [notice, setNotice] = useState<{ message: string; tone: 'success' | 'error' } | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  const [profileSaving, setProfileSaving] = useState(false);
   const [settingsSponsorEnabled, setSettingsSponsorEnabled] = useState(false);
   const [settingsSponsorCategories, setSettingsSponsorCategories] = useState<string[]>([]);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -400,6 +405,35 @@ function RoomPage({ roomId }: { roomId: string }) {
     if (sidePanelCollapsed) {
       setSidePanelCollapsed(false);
       localStorage.setItem('syncbox:side-panel-collapsed', '0');
+    }
+  }
+
+  function openProfile() {
+    setNameDraft(me?.name ?? localStorage.getItem('syncbox:name') ?? '');
+    setProfileOpen(true);
+  }
+
+  async function saveDisplayName(event: FormEvent) {
+    event.preventDefault();
+    const name = nameDraft.trim().slice(0, 32);
+    if (!name) {
+      showNotice('Tên hiển thị không được để trống.', 'error');
+      return;
+    }
+    if (!uid || name === me?.name) {
+      setProfileOpen(false);
+      return;
+    }
+    setProfileSaving(true);
+    try {
+      await updateDisplayName(roomId, uid, name, voiceByUid.has(uid));
+      localStorage.setItem('syncbox:name', name);
+      setProfileOpen(false);
+      showNotice(`Đã đổi tên thành ${name}.`);
+    } catch (cause) {
+      showNotice(cause instanceof Error ? cause.message : 'Không thể đổi tên lúc này.', 'error');
+    } finally {
+      setProfileSaving(false);
     }
   }
 
@@ -1036,7 +1070,7 @@ function RoomPage({ roomId }: { roomId: string }) {
           <button onClick={() => setHelpOpen(true)}><CircleHelp size={17} /> Hướng dẫn</button>
           <button onClick={() => void copyInvite()}><Share2 size={17} /> {copied ? 'Đã sao chép' : 'Mời bạn bè'}</button>
           {isHost && <button onClick={openSettings}><Settings2 size={17} /> Cài đặt</button>}
-          <button className="avatar-button" title={me?.name}>{me?.name?.slice(0, 1).toUpperCase()}</button>
+          <button className="avatar-button" title={`${me?.name ?? 'Tài khoản'} · Đổi tên`} aria-label="Mở hồ sơ và đổi tên" onClick={openProfile}>{me?.name?.slice(0, 1).toUpperCase()}</button>
         </div>
       </header>
 
@@ -1333,6 +1367,28 @@ function RoomPage({ roomId }: { roomId: string }) {
             </div></div>
             <div className="help-tip"><Sparkles size={15} /><span>Mẹo: sau khi xóa hoặc di chuyển queue, bạn có 7 giây để bấm <strong>Hoàn tác</strong>.</span></div>
           </section>
+        </div>
+      )}
+
+      {profileOpen && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !profileSaving) setProfileOpen(false); }}>
+          <form className="settings-modal profile-modal" onSubmit={(event) => void saveDisplayName(event)}>
+            <div className="modal-heading">
+              <div><span>HỒ SƠ TRONG PHÒNG</span><h2>Đổi tên hiển thị</h2></div>
+              <button type="button" aria-label="Đóng" disabled={profileSaving} onClick={() => setProfileOpen(false)}><X /></button>
+            </div>
+            <label className="field-label" htmlFor="display-name">Tên của bạn</label>
+            <div className="profile-name-field">
+              <Pencil />
+              <input id="display-name" autoFocus maxLength={32} value={nameDraft} onChange={(event) => setNameDraft(event.target.value)} placeholder="Nhập tên hiển thị" />
+              <span>{nameDraft.trim().length}/32</span>
+            </div>
+            <p className="profile-name-note">Tên mới sẽ được cập nhật cho danh sách thành viên và Voice Lounge. Tin nhắn hoặc bài hát đã thêm trước đó vẫn giữ tên cũ.</p>
+            <div className="modal-actions profile-actions">
+              <button type="button" className="secondary-button" disabled={profileSaving} onClick={() => setProfileOpen(false)}>Huỷ</button>
+              <button className="save-settings" disabled={profileSaving || !nameDraft.trim()}>{profileSaving ? <><LoaderCircle className="spin" /> Đang lưu</> : 'Lưu tên mới'}</button>
+            </div>
+          </form>
         </div>
       )}
 
