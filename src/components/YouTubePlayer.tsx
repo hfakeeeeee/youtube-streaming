@@ -108,7 +108,7 @@ export const YouTubePlayer = forwardRef<PlayerHandle, Props>(function YouTubePla
     iframe.setAttribute('frameborder', '0');
     iframe.setAttribute('credentialless', '');
     iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-presentation');
-    iframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen; web-share');
+    iframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; fullscreen; web-share');
     iframe.setAttribute('allowfullscreen', '');
     iframe.referrerPolicy = 'strict-origin-when-cross-origin';
     iframe.src = buildEmbedUrl(initialVideo.current.videoId, initialVideo.current.startSeconds);
