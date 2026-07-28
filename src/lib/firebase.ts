@@ -14,7 +14,7 @@ import {
   type Database,
   type Unsubscribe,
 } from 'firebase/database';
-import type { BanRecord, ChatMessage, LoopMode, Member, PlaybackState, PublicRoom, QueueItem, Role, RoomMeta, VideoItem } from '../types';
+import type { BanRecord, ChatMessage, LoopMode, Member, PlaybackState, PublicRoom, QueueItem, Role, RoomMeta, VideoItem, VoicePresence } from '../types';
 
 const config = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -59,6 +59,10 @@ export async function ensureUser(): Promise<User> {
       }
     });
   });
+}
+
+export async function getFirebaseIdToken(): Promise<string> {
+  return (await ensureUser()).getIdToken();
 }
 
 function makeRoomId(): string {
@@ -158,6 +162,23 @@ export function setMemberOnline(roomId: string, uid: string, online: boolean): P
 export function leaveRoom(roomId: string, uid: string): Promise<void> {
   const { db } = requireFirebase();
   return remove(ref(db, `rooms/${roomId}/members/${uid}`));
+}
+
+export async function setVoicePresence(roomId: string, presence: VoicePresence): Promise<void> {
+  const { db } = requireFirebase();
+  const presenceRef = ref(db, `rooms/${roomId}/voice/${presence.uid}`);
+  await set(presenceRef, presence);
+  await onDisconnect(presenceRef).remove();
+}
+
+export function updateVoiceMuted(roomId: string, uid: string, muted: boolean): Promise<void> {
+  const { db } = requireFirebase();
+  return update(ref(db, `rooms/${roomId}/voice/${uid}`), { muted });
+}
+
+export function removeVoicePresence(roomId: string, uid: string): Promise<void> {
+  const { db } = requireFirebase();
+  return remove(ref(db, `rooms/${roomId}/voice/${uid}`));
 }
 
 export function subscribeRoom<T>(roomId: string, key: string, callback: (value: T) => void, onError?: (error: Error) => void): Unsubscribe {

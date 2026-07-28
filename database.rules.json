@@ -37,6 +37,13 @@
             ".validate": "!newData.exists() || (newData.hasChildren(['uid','name','role','joinedAt']) && newData.child('uid').val() === $uid && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 32 && (!newData.child('online').exists() || newData.child('online').isBoolean()) && (!newData.child('lastChatAt').exists() || newData.child('lastChatAt').isNumber()) && (!newData.child('lastQueueAt').exists() || newData.child('lastQueueAt').isNumber()) && (newData.child('role').val() === 'listener' || newData.child('role').val() === 'dj' || (newData.child('role').val() === 'host' && root.child('rooms').child($roomId).child('meta').child('hostUid').val() === $uid)))"
           }
         },
+        "voice": {
+          ".read": "auth != null && root.child('rooms').child($roomId).child('members').child(auth.uid).exists()",
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid && (!newData.exists() || root.child('rooms').child($roomId).child('members').child(auth.uid).child('online').val() === true)",
+            ".validate": "!newData.exists() || (newData.hasChildren(['uid','name','sessionId','trackName','joinedAt','muted']) && newData.child('uid').val() === $uid && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 32 && newData.child('sessionId').isString() && newData.child('sessionId').val().length > 0 && newData.child('sessionId').val().length <= 256 && newData.child('trackName').isString() && newData.child('trackName').val().length > 0 && newData.child('trackName').val().length <= 256 && newData.child('joinedAt').isNumber() && newData.child('muted').isBoolean())"
+          }
+        },
         "bans": {
           ".read": "auth != null && (root.child('rooms').child($roomId).child('meta').child('hostUid').val() === auth.uid || root.child('rooms').child($roomId).child('meta').child('coHosts').child(auth.uid).val() === true)",
           "$uid": {

@@ -1,4 +1,5 @@
 import type { SponsorSegment, VideoItem } from '../types';
+import { getFirebaseIdToken } from './firebase';
 import { fallbackVideoMetadata } from './youtube';
 
 const baseUrl = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
@@ -15,6 +16,22 @@ async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(`${baseUrl}${path}`);
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error((body as { error?: string }).error ?? 'Yêu cầu thất bại');
+  return body as T;
+}
+
+export async function postAuthenticatedJson<T>(path: string, payload: unknown): Promise<T> {
+  if (!baseUrl) throw new Error('Chưa cấu hình VITE_API_BASE_URL');
+  const token = await getFirebaseIdToken();
+  const response = await fetch(`${baseUrl}${path}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error((body as { error?: string }).error ?? 'Yêu cầu voice thất bại');
   return body as T;
 }
 

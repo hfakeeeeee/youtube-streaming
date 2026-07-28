@@ -5,6 +5,8 @@ interface Env {
   FIREBASE_DATABASE_URL?: string;
   FIREBASE_CLIENT_EMAIL?: string;
   FIREBASE_PRIVATE_KEY?: string;
+  CLOUDFLARE_REALTIME_APP_ID?: string;
+  CLOUDFLARE_REALTIME_APP_SECRET?: string;
 }
 
 interface SearchQuota {
@@ -36,8 +38,8 @@ function corsHeaders(request: Request, env: Env): HeadersInit {
   const allowed = env.ALLOWED_ORIGINS.split(',').map((item) => item.trim());
   return {
     'Access-Control-Allow-Origin': allowed.includes(origin) ? origin : allowed[0] || '*',
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type',
     'Vary': 'Origin',
   };
 }
@@ -93,6 +95,239 @@ function base64Url(value: string | ArrayBuffer): string {
   let binary = '';
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function decodeBase64Url(value: string): Uint8Array {
+  const padded = value.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(value.length / 4) * 4, '=');
+  const binary = atob(padded);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+function decodeFirebaseUid(token: string): string | null {
+  try {
+    const payload = JSON.parse(new TextDecoder().decode(decodeBase64Url(token.split('.')[1]))) as { sub?: unknown };
+    return typeof payload.sub === 'string' && payload.sub.length > 0 && payload.sub.length <= 128 ? payload.sub : null;
+  } catch {
+    return null;
+  }
+}
+
+interface VoiceCapability {
+  uid: string;
+  roomId: string;
+  sessionId: string;
+  exp: number;
+}
+
+interface SessionDescription {
+  type: 'offer' | 'answer';
+  sdp: string;
+}
+
+function voiceConfigured(env: Env): boolean {
+  return Boolean(env.FIREBASE_DATABASE_URL && env.CLOUDFLARE_REALTIME_APP_ID && env.CLOUDFLARE_REALTIME_APP_SECRET);
+}
+
+function validRoomId(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Z2-9]{6}$/.test(value);
+}
+
+function validSfuId(value: unknown): value is string {
+  return typeof value === 'string' && /^[\w.:/-]{1,256}$/.test(value);
+}
+
+function validSessionDescription(value: unknown): value is SessionDescription {
+  if (!value || typeof value !== 'object') return false;
+  const description = value as Partial<SessionDescription>;
+  return (description.type === 'offer' || description.type === 'answer')
+    && typeof description.sdp === 'string'
+    && description.sdp.length > 0
+    && description.sdp.length <= 1_000_000;
+}
+
+async function requestBody(request: Request): Promise<Record<string, unknown>> {
+  const length = Number(request.headers.get('Content-Length') ?? 0);
+  if (length > 1_100_000) throw new Error('Voice request is too large');
+  const body = await request.json();
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Invalid JSON body');
+  return body as Record<string, unknown>;
+}
+
+async function authenticateRoomMember(
+  request: Request,
+  env: Env,
+  roomId: string,
+): Promise<{ uid: string; token: string }> {
+  const authorization = request.headers.get('Authorization') ?? '';
+  const token = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
+  const uid = token ? decodeFirebaseUid(token) : null;
+  if (!uid) throw new Error('VOICE_UNAUTHORIZED');
+  const databaseUrl = env.FIREBASE_DATABASE_URL!.replace(/\/$/, '');
+  const memberUrl = `${databaseUrl}/rooms/${encodeURIComponent(roomId)}/members/${encodeURIComponent(uid)}.json?auth=${encodeURIComponent(token)}`;
+  const response = await fetch(memberUrl, { headers: { Accept: 'application/json' } });
+  if (!response.ok) throw new Error('VOICE_UNAUTHORIZED');
+  const member = await response.json() as { uid?: string; online?: boolean } | null;
+  if (!member || member.uid !== uid || member.online === false) throw new Error('VOICE_UNAUTHORIZED');
+  return { uid, token };
+}
+
+async function signVoiceCapability(env: Env, capability: VoiceCapability): Promise<string> {
+  const payload = base64Url(JSON.stringify(capability));
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(env.CLOUDFLARE_REALTIME_APP_SECRET!),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload));
+  return `${payload}.${base64Url(signature)}`;
+}
+
+async function verifyVoiceCapability(
+  env: Env,
+  value: unknown,
+  expected: Pick<VoiceCapability, 'uid' | 'roomId' | 'sessionId'>,
+): Promise<boolean> {
+  if (typeof value !== 'string') return false;
+  const [payload, encodedSignature, extra] = value.split('.');
+  if (!payload || !encodedSignature || extra) return false;
+  try {
+    const key = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode(env.CLOUDFLARE_REALTIME_APP_SECRET!),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['verify'],
+    );
+    const valid = await crypto.subtle.verify(
+      'HMAC',
+      key,
+      decodeBase64Url(encodedSignature).buffer as ArrayBuffer,
+      new TextEncoder().encode(payload),
+    );
+    if (!valid) return false;
+    const capability = JSON.parse(new TextDecoder().decode(decodeBase64Url(payload))) as VoiceCapability;
+    return capability.uid === expected.uid
+      && capability.roomId === expected.roomId
+      && capability.sessionId === expected.sessionId
+      && capability.exp > Math.floor(Date.now() / 1000);
+  } catch {
+    return false;
+  }
+}
+
+async function realtimeRequest(
+  env: Env,
+  path: string,
+  method: 'POST' | 'PUT',
+  body?: unknown,
+): Promise<unknown> {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${env.CLOUDFLARE_REALTIME_APP_SECRET}`,
+  };
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  const response = await fetch(`https://rtc.live.cloudflare.com/v1/apps/${encodeURIComponent(env.CLOUDFLARE_REALTIME_APP_ID!)}${path}`, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await response.json().catch(() => ({})) as Record<string, unknown>;
+  if (!response.ok) {
+    const message = typeof data.errorDescription === 'string'
+      ? data.errorDescription
+      : typeof data.error === 'string' ? data.error : `Cloudflare Realtime error (${response.status})`;
+    throw new Error(message);
+  }
+  return data;
+}
+
+async function voicePresence(
+  env: Env,
+  roomId: string,
+  token: string,
+  publisherUid: string,
+): Promise<{ sessionId?: string; trackName?: string } | null> {
+  const databaseUrl = env.FIREBASE_DATABASE_URL!.replace(/\/$/, '');
+  const url = `${databaseUrl}/rooms/${encodeURIComponent(roomId)}/voice/${encodeURIComponent(publisherUid)}.json?auth=${encodeURIComponent(token)}`;
+  const response = await fetch(url, { headers: { Accept: 'application/json' } });
+  if (!response.ok) return null;
+  return response.json() as Promise<{ sessionId?: string; trackName?: string } | null>;
+}
+
+async function voice(request: Request, env: Env, pathname: string): Promise<unknown> {
+  if (!voiceConfigured(env)) throw new Error('Voice chat is not configured on the Worker');
+  const body = await requestBody(request);
+  if (!validRoomId(body.roomId)) throw new Error('Invalid room ID');
+  const { uid, token } = await authenticateRoomMember(request, env, body.roomId);
+
+  if (pathname === '/api/voice/session') {
+    // Cloudflare's session endpoint expects no request body when the client has
+    // not created an SDP offer yet. Sending `{}` triggers its schema validator.
+    const result = await realtimeRequest(env, '/sessions/new', 'POST') as { sessionId?: unknown };
+    if (!validSfuId(result.sessionId)) throw new Error('Cloudflare did not return a valid voice session');
+    const capability = await signVoiceCapability(env, {
+      uid,
+      roomId: body.roomId,
+      sessionId: result.sessionId,
+      exp: Math.floor(Date.now() / 1000) + 6 * 60 * 60,
+    });
+    return { ...result, capability };
+  }
+
+  if (!validSfuId(body.sessionId)
+    || !await verifyVoiceCapability(env, body.capability, { uid, roomId: body.roomId, sessionId: body.sessionId })) {
+    throw new Error('VOICE_UNAUTHORIZED');
+  }
+
+  if (pathname === '/api/voice/publish') {
+    if (!validSessionDescription(body.sessionDescription)
+      || !validSfuId(body.mid)
+      || !validSfuId(body.trackName)) throw new Error('Invalid publish request');
+    return realtimeRequest(env, `/sessions/${encodeURIComponent(body.sessionId)}/tracks/new`, 'POST', {
+      sessionDescription: {
+        sdp: body.sessionDescription.sdp,
+        type: body.sessionDescription.type,
+      },
+      tracks: [{ location: 'local', mid: body.mid, trackName: body.trackName }],
+    });
+  }
+
+  if (pathname === '/api/voice/subscribe') {
+    if (!validSfuId(body.publisherUid)
+      || !validSfuId(body.publisherSessionId)
+      || !validSfuId(body.trackName)
+      || body.publisherUid === uid) throw new Error('Invalid subscription request');
+    const published = await voicePresence(env, body.roomId, token, body.publisherUid);
+    if (!published
+      || published.sessionId !== body.publisherSessionId
+      || published.trackName !== body.trackName) throw new Error('Voice publisher is no longer available');
+    return realtimeRequest(env, `/sessions/${encodeURIComponent(body.sessionId)}/tracks/new`, 'POST', {
+      tracks: [{
+        location: 'remote',
+        sessionId: body.publisherSessionId,
+        trackName: body.trackName,
+      }],
+    });
+  }
+
+  if (pathname === '/api/voice/renegotiate') {
+    if (!validSessionDescription(body.sessionDescription)) throw new Error('Invalid renegotiation request');
+    return realtimeRequest(env, `/sessions/${encodeURIComponent(body.sessionId)}/renegotiate`, 'PUT', {
+      sessionDescription: body.sessionDescription,
+    });
+  }
+
+  if (pathname === '/api/voice/close') {
+    const mids = Array.isArray(body.mids) ? body.mids.filter(validSfuId).slice(0, 100) : [];
+    if (!mids.length) throw new Error('No voice tracks to close');
+    return realtimeRequest(env, `/sessions/${encodeURIComponent(body.sessionId)}/tracks/close`, 'PUT', {
+      tracks: mids.map((mid) => ({ mid })),
+      force: true,
+    });
+  }
+
+  throw new Error('VOICE_NOT_FOUND');
 }
 
 function privateKeyBytes(pem: string): ArrayBuffer {
@@ -267,8 +502,19 @@ async function sponsor(request: Request, env: Env, url: URL, videoId: string) {
 export default {
   async fetch(request: Request, env: Env, context: ExecutionContext): Promise<Response> {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders(request, env) });
-    if (request.method !== 'GET') return json(request, env, { error: 'Method not allowed' }, 405);
     const url = new URL(request.url);
+    if (url.pathname.startsWith('/api/voice/')) {
+      if (request.method !== 'POST') return json(request, env, { error: 'Method not allowed' }, 405);
+      try {
+        return json(request, env, await voice(request, env, url.pathname));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Voice request failed';
+        if (message === 'VOICE_UNAUTHORIZED') return json(request, env, { error: 'Bạn không còn quyền truy cập voice của phòng này.' }, 401);
+        if (message === 'VOICE_NOT_FOUND') return json(request, env, { error: 'Not found' }, 404);
+        return json(request, env, { error: message }, message.startsWith('Invalid') || message.startsWith('No voice') ? 400 : 502);
+      }
+    }
+    if (request.method !== 'GET') return json(request, env, { error: 'Method not allowed' }, 405);
     const cacheable = /^\/api\/(search|videos\/|playlists\/|sponsor\/)/.test(url.pathname);
     const cacheUrl = new URL(url);
     cacheUrl.searchParams.set('__origin', request.headers.get('Origin') ?? 'none');
@@ -280,7 +526,7 @@ export default {
     }
     try {
       let response: Response | undefined;
-      if (url.pathname === '/api/health') response = json(request, env, { ok: true });
+      if (url.pathname === '/api/health') response = json(request, env, { ok: true, voice: voiceConfigured(env) });
       else if (url.pathname === '/api/quota') response = json(request, env, await readSearchQuota(env));
       else if (url.pathname === '/api/search') response = await search(request, env, url);
       const videoMatch = url.pathname.match(/^\/api\/videos\/([\w-]+)$/);

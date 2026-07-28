@@ -304,17 +304,43 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 .roster-header svg { width: 16px; color: #89859a; }
 .roster-header strong { font: 600 13px 'Space Grotesk'; }
 .roster-header > span { color: #6f6b7c; font-size: 9px; }
-.roster-scroll { height: calc(100vh - 140px); padding: 13px 8px 22px; overflow-y: auto; }
+.voice-card { margin: 10px 9px 3px; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.018); }
+.voice-card.joined { border-color: rgba(56,214,232,.18); background: linear-gradient(135deg,rgba(56,214,232,.055),rgba(139,92,246,.035)); }
+.voice-heading { display: grid; grid-template-columns: 31px minmax(0,1fr) auto; align-items: center; gap: 8px; }
+.voice-icon { width: 31px; height: 31px; display: grid; place-items: center; border-radius: 9px; color: #9f96b5; background: rgba(255,255,255,.04); }
+.voice-card.joined .voice-icon { color: var(--accent); background: rgba(56,214,232,.09); }
+.voice-icon svg { width: 15px; }
+.voice-heading > div { min-width: 0; display: grid; gap: 2px; }
+.voice-heading strong { overflow: hidden; color: #d4d1dc; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.voice-heading small { overflow: hidden; color: #716e7d; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.voice-join { height: 29px; display: flex; align-items: center; gap: 5px; padding: 0 8px; border: 1px solid rgba(139,92,246,.22); border-radius: 8px; color: #d8ceff; background: rgba(139,92,246,.1); font-size: 8px; font-weight: 700; cursor: pointer; }
+.voice-join:hover { border-color: rgba(56,214,232,.3); color: #c9f9fc; background: rgba(56,214,232,.08); }
+.voice-join:disabled { cursor: wait; opacity: .7; }
+.voice-join svg { width: 13px; }
+.voice-leave { width: 28px; height: 28px; display: grid; place-items: center; padding: 0; border: 1px solid rgba(251,113,133,.16); border-radius: 8px; color: #d17b89; background: rgba(251,113,133,.045); cursor: pointer; }
+.voice-leave svg { width: 13px; }
+.voice-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 9px; }
+.voice-controls button { min-width: 0; height: 29px; display: flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid var(--line); border-radius: 8px; color: #8d899a; background: rgba(0,0,0,.15); font-size: 8px; cursor: pointer; }
+.voice-controls button:hover { color: #cbc7d5; background: rgba(255,255,255,.035); }
+.voice-controls button.active { border-color: rgba(251,113,133,.18); color: #f297a5; background: rgba(251,113,133,.055); }
+.voice-controls svg { width: 13px; }
+.voice-error { width: 100%; display: grid; grid-template-columns: 14px minmax(0,1fr) auto; align-items: center; gap: 5px; margin-top: 8px; padding: 7px; border: 1px solid rgba(251,113,133,.14); border-radius: 8px; color: #c98590; background: rgba(251,113,133,.04); text-align: left; cursor: pointer; }
+.voice-error svg { width: 12px; }
+.voice-error span { overflow: hidden; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+.voice-error b { font-size: 7px; }
+.roster-scroll { height: calc(100vh - 260px); padding: 13px 8px 22px; overflow-y: auto; }
 .roster-group + .roster-group { margin-top: 17px; }
 .roster-group h3 { margin: 0 9px 6px; color: #686474; font-size: 9px; font-weight: 700; letter-spacing: .8px; }
 .roster-member { position: relative; grid-template-columns: 35px minmax(0,1fr) auto; gap: 9px; padding: 7px 8px; }
 .roster-member .member-avatar { position: relative; width: 35px; height: 35px; border-radius: 50%; background: linear-gradient(145deg,#7651ca,#44317c); }
+.roster-member .member-avatar.in-voice { box-shadow: 0 0 0 2px rgba(139,92,246,.24); }
+.roster-member.speaking .member-avatar { box-shadow: 0 0 0 2px #35d5b1,0 0 16px rgba(53,213,177,.25); }
 .member-presence { position: absolute; right: -1px; bottom: -1px; width: 10px; height: 10px; border: 2px solid #0c0c14; border-radius: 50%; background: var(--success); }
 .roster-member .member-copy { min-width: 0; display: grid; gap: 2px; }
 .roster-member .member-copy strong, .roster-member .member-copy span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .roster-member .member-copy strong { color: #c9c6d3; font-size: 11px; }
 .roster-member .member-copy strong small { color: #777383; font-size: 8px; font-weight: 500; }
-.roster-member .member-copy span { color: #716d7d; font-size: 9px; }
+.roster-member .member-copy span { display: flex; align-items: center; gap: 3px; color: #716d7d; font-size: 9px; }
 .roster-member .member-admin { display: none; grid-column: 2 / -1; justify-content: flex-end; padding-top: 3px; }
 .roster-member:hover .member-admin, .roster-member:focus-within .member-admin { display: flex; }
 .connection-banner { position: fixed; z-index: 70; top: 76px; left: 50%; display: flex; align-items: center; gap: 7px; padding: 8px 13px; border: 1px solid rgba(251,191,36,.25); border-top: 0; border-radius: 0 0 10px 10px; color: #f5d579; background: rgba(52,39,12,.96); box-shadow: 0 10px 30px rgba(0,0,0,.3); font-size: 11px; transform: translateX(-50%); }
@@ -497,7 +523,7 @@ button:disabled { opacity: .42; cursor: not-allowed; }
   .side-panel { height: 100%; overflow: hidden; }
   .member-roster { height: 100%; }
   .panel-body { height: calc(100dvh - 140px); }
-  .roster-scroll { height: calc(100dvh - 140px); }
+  .roster-scroll { height: calc(100dvh - 260px); }
 }
 
 @media (min-width: 1051px) and (max-width: 1400px) {

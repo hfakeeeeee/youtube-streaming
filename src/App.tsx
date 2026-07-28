@@ -17,6 +17,8 @@ import {
   LockKeyhole,
   Maximize2,
   MessageCircle,
+  Mic,
+  MicOff,
   Minimize2,
   Pause,
   PanelRightClose,
@@ -36,6 +38,7 @@ import {
   Users,
   UserMinus,
   Volume2,
+  VolumeX,
   WandSparkles,
   WifiOff,
   X,
@@ -64,7 +67,9 @@ import {
   restoreQueueItems,
   sendChat,
   saveRoomSettings,
+  removeVoicePresence,
   setMemberOnline,
+  setVoicePresence,
   subscribeConnection,
   subscribePublicRooms,
   subscribeRoom,
@@ -75,10 +80,12 @@ import {
   updateMemberRole,
   updateCoHost,
   updateRoomMeta,
+  updateVoiceMuted,
   writePlayback,
 } from './lib/firebase';
+import { VoiceClient, type VoiceConnectionState } from './lib/voice';
 import { formatDuration } from './lib/youtube';
-import type { BanRecord, ChatMessage, LoopMode, Member, PlaybackState, PublicRoom, QueueItem, Role, RoomMeta, SponsorSegment, VideoItem } from './types';
+import type { BanRecord, ChatMessage, LoopMode, Member, PlaybackState, PublicRoom, QueueItem, Role, RoomMeta, SponsorSegment, VideoItem, VoicePresence } from './types';
 
 const EMPTY_PLAYBACK: PlaybackState = {
   video: null,
@@ -304,6 +311,12 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [playback, setPlayback] = useState<PlaybackState>(EMPTY_PLAYBACK);
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
+  const [voicePresences, setVoicePresences] = useState<VoicePresence[]>([]);
+  const [voiceState, setVoiceState] = useState<VoiceConnectionState>('idle');
+  const [voiceError, setVoiceError] = useState('');
+  const [voiceMuted, setVoiceMuted] = useState(false);
+  const [voiceDeafened, setVoiceDeafened] = useState(false);
+  const [speakingUids, setSpeakingUids] = useState<Set<string>>(() => new Set());
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [bans, setBans] = useState<BanRecord[]>([]);
   const [segments, setSegments] = useState<SponsorSegment[]>([]);
@@ -336,6 +349,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   const pendingQueueStart = useRef<string | null>(null);
   const handledEndedRevision = useRef(0);
   const undoTimer = useRef<number | undefined>(undefined);
+  const voiceClientRef = useRef<VoiceClient | null>(null);
 
   const me = useMemo(() => members.find((member) => member.uid === uid), [members, uid]);
   const isOwner = Boolean(uid && meta?.hostUid === uid);
@@ -347,6 +361,8 @@ function RoomPage({ roomId }: { roomId: string }) {
   const sponsorCategoryKey = meta?.sponsorCategories.join(',') ?? 'sponsor';
   const loopMode: LoopMode = meta?.loopMode ?? 'off';
   const queueDuration = useMemo(() => queue.reduce((total, item) => total + (item.duration ?? 0), 0), [queue]);
+  const voiceByUid = useMemo(() => new Map(voicePresences.map((presence) => [presence.uid, presence])), [voicePresences]);
+  const voiceJoined = voiceByUid.has(uid) && (voiceState === 'connected' || voiceState === 'reconnecting' || voiceState === 'error');
   const memberGroups = useMemo(() => {
     const groups = [
       { key: 'owner', label: 'OWNER', members: members.filter((member) => member.uid === meta?.hostUid) },
@@ -400,6 +416,7 @@ function RoomPage({ roomId }: { roomId: string }) {
           subscribeRoom<PlaybackState | null>(roomId, 'playback', (value) => setPlayback(value ?? EMPTY_PLAYBACK), handleAccessError),
           subscribeRoom<Record<string, Omit<QueueItem, 'queueId'>> | null>(roomId, 'queue', (value) => setQueue(normalizeQueue(value)), handleAccessError),
           subscribeRoom<Record<string, Member> | null>(roomId, 'members', (value) => setMembers(normalizeMembers(value)), handleAccessError),
+          subscribeRoom<Record<string, VoicePresence> | null>(roomId, 'voice', (value) => setVoicePresences(value ? Object.values(value) : []), handleAccessError),
           subscribeRoom<Record<string, Omit<ChatMessage, 'id'>> | null>(roomId, 'messages', (value) => setMessages(normalizeMessages(value)), handleAccessError),
         );
       } catch (cause) {
@@ -412,9 +429,16 @@ function RoomPage({ roomId }: { roomId: string }) {
     return () => {
       active = false;
       unsubscribes.forEach((unsubscribe) => unsubscribe());
+      void voiceClientRef.current?.leave();
+      if (joinedUid) void removeVoicePresence(roomId, joinedUid).catch(() => undefined);
       if (joinedUid) void setMemberOnline(roomId, joinedUid, false).catch(() => undefined);
     };
   }, [roomId]);
+
+  useEffect(() => {
+    if (voiceState !== 'connected' && voiceState !== 'reconnecting') return;
+    void voiceClientRef.current?.sync(voicePresences);
+  }, [voicePresences, voiceState]);
 
   useEffect(() => {
     if (!isHost) {
@@ -892,6 +916,76 @@ function RoomPage({ roomId }: { roomId: string }) {
     }
   }
 
+  async function joinVoice() {
+    if (!uid || !me || voiceState === 'joining') return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      showNotice('Trình duyệt này không hỗ trợ microphone.', 'error');
+      return;
+    }
+    setVoiceError('');
+    await voiceClientRef.current?.leave();
+    const client = new VoiceClient({
+      onState: (state, message) => {
+        setVoiceState(state);
+        setVoiceError(message ?? '');
+      },
+      onSpeaking: (speakerUid, speaking) => {
+        setSpeakingUids((current) => {
+          if (current.has(speakerUid) === speaking) return current;
+          const next = new Set(current);
+          if (speaking) next.add(speakerUid);
+          else next.delete(speakerUid);
+          return next;
+        });
+      },
+    });
+    voiceClientRef.current = client;
+    try {
+      const published = await client.join(roomId, uid);
+      await setVoicePresence(roomId, {
+        uid,
+        name: me.name,
+        sessionId: published.sessionId,
+        trackName: published.trackName,
+        joinedAt: Date.now(),
+        muted: false,
+      });
+      setVoiceMuted(false);
+      setVoiceDeafened(false);
+      await client.sync(voicePresences);
+    } catch (cause) {
+      await removeVoicePresence(roomId, uid).catch(() => undefined);
+      showNotice(cause instanceof Error ? cause.message : 'Không thể tham gia voice chat.', 'error');
+    }
+  }
+
+  async function leaveVoice() {
+    await removeVoicePresence(roomId, uid).catch(() => undefined);
+    await voiceClientRef.current?.leave();
+    voiceClientRef.current = null;
+    setVoiceMuted(false);
+    setVoiceDeafened(false);
+    setSpeakingUids(new Set());
+    setVoiceError('');
+  }
+
+  function toggleVoiceMute() {
+    const next = !voiceMuted;
+    voiceClientRef.current?.setMuted(next);
+    setVoiceMuted(next);
+    void updateVoiceMuted(roomId, uid, next).catch(() => undefined);
+  }
+
+  function toggleVoiceDeafen() {
+    const next = !voiceDeafened;
+    voiceClientRef.current?.setDeafened(next);
+    setVoiceDeafened(next);
+    if (next && !voiceMuted) {
+      setVoiceMuted(true);
+      void updateVoiceMuted(roomId, uid, true).catch(() => undefined);
+    }
+  }
+
   function canModerate(member: Member) {
     if (member.uid === uid || member.uid === meta?.hostUid) return false;
     if (isOwner) return true;
@@ -1103,19 +1197,58 @@ function RoomPage({ roomId }: { roomId: string }) {
             <div><Users /><strong>Thành viên</strong></div>
             <span>{members.length} online</span>
           </div>
+          <section className={`voice-card ${voiceJoined ? 'joined' : ''}`}>
+            <div className="voice-heading">
+              <span className="voice-icon"><Radio /></span>
+              <div>
+                <strong>{voiceJoined ? 'Voice đã kết nối' : 'Voice Lounge'}</strong>
+                <small>
+                  {voiceState === 'joining' ? 'Đang mở microphone…'
+                    : voiceState === 'reconnecting' ? 'Đang kết nối lại…'
+                      : voiceJoined ? `${voicePresences.length} người trong voice`
+                        : 'Trò chuyện trong khi nghe nhạc'}
+                </small>
+              </div>
+              {!voiceJoined ? (
+                <button className="voice-join" onClick={() => void joinVoice()} disabled={voiceState === 'joining'}>
+                  {voiceState === 'joining' ? <LoaderCircle className="spin" /> : <Mic />}
+                  <span>Tham gia</span>
+                </button>
+              ) : (
+                <button className="voice-leave" title="Rời voice" onClick={() => void leaveVoice()}><X /></button>
+              )}
+            </div>
+            {voiceJoined && (
+              <div className="voice-controls">
+                <button className={voiceMuted ? 'active' : ''} onClick={toggleVoiceMute} disabled={voiceDeafened}>
+                  {voiceMuted ? <MicOff /> : <Mic />}
+                  <span>{voiceMuted ? 'Bật mic' : 'Tắt mic'}</span>
+                </button>
+                <button className={voiceDeafened ? 'active' : ''} onClick={toggleVoiceDeafen}>
+                  {voiceDeafened ? <VolumeX /> : <Headphones />}
+                  <span>{voiceDeafened ? 'Bật nghe' : 'Tắt nghe'}</span>
+                </button>
+              </div>
+            )}
+            {voiceError && (
+              <button className="voice-error" onClick={() => void joinVoice()}>
+                <RefreshCw /><span>{voiceError}</span><b>Thử lại</b>
+              </button>
+            )}
+          </section>
           <div className="roster-scroll">
             {memberGroups.map((group) => (
               <section className="roster-group" key={group.key}>
                 <h3>{group.label} — {group.members.length}</h3>
                 {group.members.map((member) => (
-                  <article className="member roster-member" key={member.uid}>
-                    <div className="member-avatar">
+                  <article className={`member roster-member ${speakingUids.has(member.uid) ? 'speaking' : ''}`} key={member.uid}>
+                    <div className={`member-avatar ${voiceByUid.has(member.uid) ? 'in-voice' : ''}`}>
                       {member.name.slice(0, 1).toUpperCase()}
                       <i className="member-presence" />
                     </div>
                     <div className="member-copy">
                       <strong>{member.name} {member.uid === uid && <small>(bạn)</small>}</strong>
-                      <span>{member.uid === meta.hostUid ? 'Owner phòng' : meta.coHosts?.[member.uid] ? 'Co-host' : member.role === 'dj' ? 'DJ' : 'Đang nghe'}</span>
+                      <span>{voiceByUid.has(member.uid) ? <>{voiceByUid.get(member.uid)?.muted ? <MicOff size={10} /> : <Mic size={10} />} Trong voice</> : member.uid === meta.hostUid ? 'Owner phòng' : meta.coHosts?.[member.uid] ? 'Co-host' : member.role === 'dj' ? 'DJ' : 'Đang nghe'}</span>
                     </div>
                     {member.uid === meta.hostUid ? <Crown className="host-crown" size={17} /> : meta.coHosts?.[member.uid] ? (
                       isOwner ? <button className="cohost-button active" title="Thu hồi quyền Co-host" onClick={() => void setCoHost(member, false)}><ShieldCheck size={15} /></button> : <ShieldCheck className="cohost-mark" size={17} />
@@ -1157,6 +1290,8 @@ function RoomPage({ roomId }: { roomId: string }) {
               <article><i><ThumbsUp /></i><div><strong>Bình chọn</strong><span>Mỗi người có một vote để thể hiện bài muốn nghe tiếp.</span></div></article>
               <article><i><MessageCircle /></i><div><strong>Chat</strong><span>Trò chuyện với mọi người trong tab Chat nếu phòng đang bật chat.</span></div></article>
               <article><i><Sparkles /></i><div><strong>SponsorBlock</strong><span>Tự bỏ qua sponsor và các phân đoạn cộng đồng đã đánh dấu.</span></div></article>
+              <article><i><Mic /></i><div><strong>Voice Lounge</strong><span>Bấm Tham gia trong danh sách thành viên và cho phép trình duyệt dùng microphone.</span></div></article>
+              <article><i><VolumeX /></i><div><strong>Mute / Deafen</strong><span>Mute tắt microphone; Deafen tắt âm thanh của mọi người và đồng thời tắt mic của bạn.</span></div></article>
             </div></div>
 
             <div className="help-section"><h3>Quyền trong phòng</h3><div className="role-guide">

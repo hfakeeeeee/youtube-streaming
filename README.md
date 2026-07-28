@@ -10,6 +10,7 @@ Phòng nghe YouTube cộng tác theo thời gian thực, kết hợp room/queue 
 - Chỉ tìm kiếm YouTube sau khi người dùng nhấn Enter.
 - Đồng bộ play, pause, seek và skip bằng thời gian Firebase server; âm lượng được lưu riêng trên từng thiết bị.
 - Chat, presence, chuyển Host, DJ tự tiếp quản khi Host offline và quản lý vai trò trong phòng.
+- Voice chat dạng Discord qua Cloudflare Realtime SFU: mute, deafen, trạng thái đang nói, tự dọn presence khi rời phòng.
 - Kick, ban, unban và rate limit cho chat/thêm bài; Owner và Co-host được bảo vệ theo cấp quyền.
 - Danh sách phòng công khai trên trang chủ, đồng bộ qua một Firebase index riêng.
 - Ba chế độ loop, queue kéo thả, bình chọn, chống bài trùng, tổng thời lượng và xóa toàn bộ queue.
@@ -24,6 +25,7 @@ Phòng nghe YouTube cộng tác theo thời gian thực, kết hợp room/queue 
 - Hosting: GitHub Pages.
 - Realtime/Auth: Firebase Anonymous Auth + Realtime Database.
 - API proxy: Cloudflare Worker.
+- Voice media: Cloudflare Realtime SFU; Firebase chỉ lưu presence, không vận chuyển âm thanh.
 - Player: YouTube IFrame API với `youtube-nocookie.com`.
 - Sponsor data: SponsorBlock API.
 
@@ -184,6 +186,40 @@ Worker cung cấp:
 - `GET /api/videos/:videoId`
 - `GET /api/playlists/:playlistId`
 - `GET /api/sponsor/:videoId?categories=sponsor,intro`
+- `POST /api/voice/*` (yêu cầu Firebase ID token và capability của phiên)
+
+### Bật voice chat
+
+Voice chat cần một Cloudflare Realtime SFU App. App ID và App Secret chỉ được lưu trong Worker, tuyệt đối không đặt trong biến `VITE_...`:
+
+1. Trong Cloudflare Dashboard, mở **Realtime** > **SFU** và tạo một app.
+2. Sao chép **App ID** và **App Secret**.
+3. Tại thư mục `worker`, nhập ba secret:
+
+```powershell
+npx wrangler secret put CLOUDFLARE_REALTIME_APP_ID
+npx wrangler secret put CLOUDFLARE_REALTIME_APP_SECRET
+npx wrangler secret put FIREBASE_DATABASE_URL
+npm run deploy
+```
+
+`FIREBASE_DATABASE_URL` là đúng URL đã dùng cho `VITE_FIREBASE_DATABASE_URL`. Worker dùng Firebase ID token của trình duyệt để xác nhận người gọi đang ở trong room trước khi cấp phiên SFU; Worker không bao giờ gửi App Secret xuống frontend.
+
+Mở endpoint health sau khi deploy:
+
+```text
+https://syncbox-api.YOUR_SUBDOMAIN.workers.dev/api/health
+```
+
+Kết quả `{"ok":true,"voice":true}` nghĩa là đủ ba secret. Nếu `voice` là `false`, các tính năng nghe nhạc vẫn chạy nhưng nút tham gia voice sẽ báo chưa cấu hình.
+
+Sau khi sửa `database.rules.json`, nhớ deploy Rules mới:
+
+```powershell
+firebase deploy --only database
+```
+
+Cloudflare Realtime có 1.000 GB egress miễn phí mỗi tháng theo gói hiện tại. Usage và giới hạn nên được theo dõi trực tiếp trong Cloudflare Dashboard vì chính sách có thể thay đổi.
 
 ### Dọn phòng hết hạn tự động
 

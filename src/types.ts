@@ -26,6 +26,15 @@ export interface Member {
   online: boolean;
 }
 
+export interface VoicePresence {
+  uid: string;
+  name: string;
+  sessionId: string;
+  trackName: string;
+  joinedAt: number;
+  muted: boolean;
+}
+
 export interface BanRecord {
   uid: string;
   name: string;
