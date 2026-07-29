@@ -87,6 +87,7 @@ import {
 } from './lib/firebase';
 import { VoiceClient, type VoiceConnectionState } from './lib/voice';
 import { formatDuration } from './lib/youtube';
+import { playPresenceSound, unlockSounds } from './lib/sounds';
 import type { BanRecord, ChatMessage, LoopMode, Member, PlaybackState, PublicRoom, QueueItem, Role, RoomMeta, SponsorSegment, VideoItem, VoicePresence } from './types';
 
 const EMPTY_PLAYBACK: PlaybackState = {
@@ -195,6 +196,7 @@ function HomePage() {
 
   async function handleCreate(event: FormEvent) {
     event.preventDefault();
+    void unlockSounds();
     setBusy(true);
     setError('');
     try {
@@ -211,6 +213,7 @@ function HomePage() {
 
   async function handleJoin(event: FormEvent) {
     event.preventDefault();
+    void unlockSounds();
     setBusy(true);
     setError('');
     try {
@@ -358,6 +361,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   const nonRetryablePlayerVideo = useRef('');
   const undoTimer = useRef<number | undefined>(undefined);
   const voiceClientRef = useRef<VoiceClient | null>(null);
+  const previousVoiceUids = useRef<Set<string> | null>(null);
 
   const me = useMemo(() => members.find((member) => member.uid === uid), [members, uid]);
   const isOwner = Boolean(uid && meta?.hostUid === uid);
@@ -461,7 +465,17 @@ function RoomPage({ roomId }: { roomId: string }) {
           subscribeRoom<PlaybackState | null>(roomId, 'playback', (value) => setPlayback(value ?? EMPTY_PLAYBACK), handleAccessError),
           subscribeRoom<Record<string, Omit<QueueItem, 'queueId'>> | null>(roomId, 'queue', (value) => setQueue(normalizeQueue(value)), handleAccessError),
           subscribeRoom<Record<string, Member> | null>(roomId, 'members', (value) => setMembers(normalizeMembers(value)), handleAccessError),
-          subscribeRoom<Record<string, VoicePresence> | null>(roomId, 'voice', (value) => setVoicePresences(value ? Object.values(value) : []), handleAccessError),
+          subscribeRoom<Record<string, VoicePresence> | null>(roomId, 'voice', (value) => {
+            const nextPresences = value ? Object.values(value) : [];
+            const nextUids = new Set(nextPresences.map((presence) => presence.uid));
+            const previousUids = previousVoiceUids.current;
+            if (previousUids) {
+              if (nextPresences.some((presence) => !previousUids.has(presence.uid))) playPresenceSound('join');
+              if (Array.from(previousUids).some((voiceUid) => !nextUids.has(voiceUid))) playPresenceSound('leave');
+            }
+            previousVoiceUids.current = nextUids;
+            setVoicePresences(nextPresences);
+          }, handleAccessError),
           subscribeRoom<Record<string, Omit<ChatMessage, 'id'>> | null>(roomId, 'messages', (value) => setMessages(normalizeMessages(value)), handleAccessError),
         );
       } catch (cause) {
@@ -484,6 +498,16 @@ function RoomPage({ roomId }: { roomId: string }) {
     if (voiceState !== 'connected' && voiceState !== 'reconnecting') return;
     void voiceClientRef.current?.sync(voicePresences);
   }, [voicePresences, voiceState]);
+
+  useEffect(() => {
+    const unlock = () => { void unlockSounds(); };
+    window.addEventListener('pointerdown', unlock, { once: true });
+    window.addEventListener('keydown', unlock, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+  }, []);
 
   useEffect(() => {
     if (!isHost) {
