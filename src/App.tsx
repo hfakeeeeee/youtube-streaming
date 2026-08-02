@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AudioWaveform,
   ArrowDown,
@@ -310,6 +310,47 @@ function expectedPosition(playback: PlaybackState, serverOffset = 0) {
   return Math.max(0, playback.position + (Date.now() + serverOffset - playback.updatedAt) / 1000);
 }
 
+const chatTimestampFormatter = new Intl.DateTimeFormat('vi-VN', {
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+});
+
+const chatDateFormatter = new Intl.DateTimeFormat('vi-VN', {
+  weekday: 'long',
+  day: '2-digit',
+  month: '2-digit',
+  year: 'numeric',
+});
+
+function chatDateKey(sentAt: number): string {
+  const date = new Date(sentAt);
+  if (!Number.isFinite(date.getTime())) return '';
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+function formatChatDate(sentAt: number): string {
+  const date = new Date(sentAt);
+  if (!Number.isFinite(date.getTime())) return '';
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  const key = chatDateKey(sentAt);
+  if (key === chatDateKey(today.getTime())) return 'Hôm nay';
+  if (key === chatDateKey(yesterday.getTime())) return 'Hôm qua';
+  return chatDateFormatter.format(date);
+}
+
+function formatChatTimestamp(sentAt: number): string {
+  const date = new Date(sentAt);
+  return Number.isFinite(date.getTime()) ? chatTimestampFormatter.format(date) : '';
+}
+
+function chatTimestampIso(sentAt: number): string | undefined {
+  const date = new Date(sentAt);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
+}
+
 function RoomPage({ roomId }: { roomId: string }) {
   const [uid, setUid] = useState('');
   const [meta, setMeta] = useState<RoomMeta | null>(null);
@@ -362,6 +403,9 @@ function RoomPage({ roomId }: { roomId: string }) {
   const undoTimer = useRef<number | undefined>(undefined);
   const voiceClientRef = useRef<VoiceClient | null>(null);
   const previousVoiceUids = useRef<Set<string> | null>(null);
+  const messagesRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScrollChat = useRef(true);
+  const lastChatMessageId = useRef<string | null>(null);
 
   const me = useMemo(() => members.find((member) => member.uid === uid), [members, uid]);
   const isOwner = Boolean(uid && meta?.hostUid === uid);
@@ -384,6 +428,28 @@ function RoomPage({ roomId }: { roomId: string }) {
     ];
     return groups.filter((group) => group.members.length > 0);
   }, [members, meta?.coHosts, meta?.hostUid]);
+
+  useEffect(() => {
+    const latestMessage = messages[messages.length - 1];
+    const isNewMessage = Boolean(latestMessage && latestMessage.id !== lastChatMessageId.current);
+    const isMyNewMessage = Boolean(isNewMessage && latestMessage?.uid === uid);
+    lastChatMessageId.current = latestMessage?.id ?? null;
+
+    if (activePanel !== 'chat' || sidePanelCollapsed) return;
+    const container = messagesRef.current;
+    if (!container || (!shouldAutoScrollChat.current && !isMyNewMessage)) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      container.scrollTo({ top: container.scrollHeight, behavior: isNewMessage ? 'smooth' : 'auto' });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activePanel, messages, sidePanelCollapsed, uid]);
+
+  function handleChatScroll() {
+    const container = messagesRef.current;
+    if (!container) return;
+    shouldAutoScrollChat.current = container.scrollHeight - container.scrollTop - container.clientHeight < 72;
+  }
 
   function showNotice(message: string, tone: 'success' | 'error' = 'success') {
     setNotice({ message, tone });
@@ -945,6 +1011,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     if (!chatText.trim() || !me || meta?.chatEnabled === false) return;
     const text = chatText;
     setChatText('');
+    shouldAutoScrollChat.current = true;
     try {
       await sendChat(roomId, uid, me.name, text);
     } catch (cause) {
@@ -1300,8 +1367,22 @@ function RoomPage({ roomId }: { roomId: string }) {
 
           {activePanel === 'chat' && (
             <div className="panel-body chat-panel">
-              <div className="messages">
-                {messages.map((message) => <div className={`message ${message.uid === uid ? 'mine' : ''}`} key={message.id}><span>{message.name}</span><p>{message.text}</p></div>)}
+              <div className="messages" ref={messagesRef} onScroll={handleChatScroll}>
+                {messages.map((message, index) => {
+                  const showDate = index === 0 || chatDateKey(messages[index - 1].sentAt) !== chatDateKey(message.sentAt);
+                  return (
+                    <Fragment key={message.id}>
+                      {showDate && <div className="chat-date-divider"><span>{formatChatDate(message.sentAt)}</span></div>}
+                      <div className={`message ${message.uid === uid ? 'mine' : ''}`}>
+                        <div className="message-meta">
+                          <strong>{message.uid === uid ? 'Bạn' : message.name}</strong>
+                          <time dateTime={chatTimestampIso(message.sentAt)}>{formatChatTimestamp(message.sentAt)}</time>
+                        </div>
+                        <p>{message.text}</p>
+                      </div>
+                    </Fragment>
+                  );
+                })}
                 {messages.length === 0 && <div className="empty-list"><MessageCircle /><span>{meta.chatEnabled === false ? 'Chat đang được Host tắt' : 'Cuộc trò chuyện bắt đầu ở đây'}</span></div>}
               </div>
               <form className="chat-form" onSubmit={submitChat}><input value={chatText} onChange={(event) => setChatText(event.target.value)} placeholder={meta.chatEnabled === false ? 'Chat đã bị tắt' : 'Nhắn cho mọi người…'} disabled={meta.chatEnabled === false} maxLength={500} /><button disabled={meta.chatEnabled === false}><ChevronRight /></button></form>
