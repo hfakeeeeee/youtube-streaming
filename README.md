@@ -9,11 +9,12 @@ Phòng nghe YouTube cộng tác theo thời gian thực, kết hợp room/queue 
 - Dán video, Shorts, playlist hoặc link `youtu.be` để thêm vào queue.
 - Chỉ tìm kiếm YouTube sau khi người dùng nhấn Enter.
 - Đồng bộ play, pause, seek và skip bằng thời gian Firebase server; âm lượng được lưu riêng trên từng thiết bị.
-- Chat, presence, chuyển Host, DJ tự tiếp quản khi Host offline và quản lý vai trò trong phòng.
+- Chat, presence, chuyển Owner an toàn, Co-host/DJ tự tiếp quản khi Owner offline và quản lý vai trò trong phòng.
 - Voice chat dạng Discord qua Cloudflare Realtime SFU: mute, deafen, trạng thái đang nói, tự dọn presence khi rời phòng.
 - Kick, ban, unban và rate limit cho chat/thêm bài; Owner và Co-host được bảo vệ theo cấp quyền.
 - Danh sách phòng công khai trên trang chủ, đồng bộ qua một Firebase index riêng.
-- Ba chế độ loop, queue kéo thả, bình chọn, chống bài trùng, tổng thời lượng và xóa toàn bộ queue.
+- Ba chế độ loop, queue kéo thả, bình chọn, chống bài trùng bằng transaction, lịch sử 50 bài, tổng thời lượng và xóa toàn bộ queue.
+- Dashboard trạng thái Firebase/player/voice với tự phục hồi và thao tác retry thủ công.
 - Room settings cho quyền thêm bài, chat, public/private và các nhóm SponsorBlock.
 - Phòng hết hạn sau 7 ngày Host không hoạt động và được dọn khi có request truy cập tiếp theo.
 - SponsorBlock là thiết lập chung của room để mọi thiết bị cùng bỏ qua một đoạn.

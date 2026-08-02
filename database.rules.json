@@ -66,6 +66,14 @@
             }
           }
         },
+        "history": {
+          ".read": "auth != null && root.child('rooms').child($roomId).child('members').child(auth.uid).exists()",
+          ".write": "auth != null && (root.child('rooms').child($roomId).child('meta').child('hostUid').val() === auth.uid || root.child('rooms').child($roomId).child('meta').child('coHosts').child(auth.uid).val() === true || root.child('rooms').child($roomId).child('members').child(auth.uid).child('role').val() === 'dj')",
+          ".indexOn": ["playedAt"],
+          "$historyId": {
+            ".validate": "!newData.exists() || (newData.hasChildren(['id','title','thumbnail','playedAt','playedBy']) && newData.child('id').isString() && newData.child('id').val().length === 11 && newData.child('title').isString() && newData.child('title').val().length <= 200 && newData.child('thumbnail').isString() && newData.child('playedAt').isNumber() && newData.child('playedBy').isString())"
+          }
+        },
         "messages": {
           ".read": "auth != null && root.child('rooms').child($roomId).child('members').child(auth.uid).exists()",
           "$messageId": {

@@ -18,6 +18,13 @@ export interface QueueItem extends VideoItem {
   votes?: Record<string, true>;
 }
 
+export interface QueueHistoryItem extends VideoItem {
+  historyId: string;
+  playedAt: number;
+  playedBy: string;
+  addedByName?: string;
+}
+
 export interface Member {
   uid: string;
   name: string;

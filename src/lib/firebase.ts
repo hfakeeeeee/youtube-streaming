@@ -8,13 +8,14 @@ import {
   push,
   ref,
   remove,
+  runTransaction,
   serverTimestamp,
   set,
   update,
   type Database,
   type Unsubscribe,
 } from 'firebase/database';
-import type { BanRecord, ChatMessage, LoopMode, Member, PlaybackState, PublicRoom, QueueItem, Role, RoomMeta, VideoItem, VoicePresence } from '../types';
+import type { BanRecord, ChatMessage, LoopMode, Member, PlaybackState, PublicRoom, QueueHistoryItem, QueueItem, Role, RoomMeta, VideoItem, VoicePresence } from '../types';
 
 const config = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -215,21 +216,36 @@ export function subscribeServerOffset(callback: (offset: number) => void): Unsub
   return onValue(ref(db, '.info/serverTimeOffset'), (snapshot) => callback(Number(snapshot.val()) || 0));
 }
 
-export async function addVideos(roomId: string, videos: VideoItem[], member: Member): Promise<void> {
+export async function addVideos(roomId: string, videos: VideoItem[], member: Member): Promise<{ added: VideoItem[]; duplicates: VideoItem[] }> {
   const { db } = requireFirebase();
-  const additions: Record<string, unknown> = {};
+  const added: VideoItem[] = [];
+  const duplicates: VideoItem[] = [];
   for (const video of videos.slice(0, 50)) {
-    const itemRef = push(ref(db, `rooms/${roomId}/queue`));
-    additions[`rooms/${roomId}/queue/${itemRef.key!}`] = {
-      ...video,
-      queueId: itemRef.key!,
-      addedAt: Date.now(),
-      addedBy: member.uid,
-      addedByName: member.name,
+    const cleanVideo: VideoItem = {
+      id: video.id,
+      title: video.title,
+      channel: video.channel ?? '',
+      thumbnail: video.thumbnail,
+      duration: video.duration ?? 0,
     };
+    const itemRef = ref(db, `rooms/${roomId}/queue/${cleanVideo.id}`);
+    const result = await runTransaction(itemRef, (current) => {
+      if (current) return undefined;
+      return {
+        ...cleanVideo,
+        queueId: cleanVideo.id,
+        addedAt: Date.now(),
+        addedBy: member.uid,
+        addedByName: member.name,
+      } satisfies QueueItem;
+    }, { applyLocally: false });
+    if (result.committed) added.push(cleanVideo);
+    else duplicates.push(cleanVideo);
   }
-  additions[`rooms/${roomId}/members/${member.uid}/lastQueueAt`] = serverTimestamp();
-  await update(ref(db), additions);
+  if (added.length > 0) {
+    await update(ref(db), { [`rooms/${roomId}/members/${member.uid}/lastQueueAt`]: serverTimestamp() });
+  }
+  return { added, duplicates };
 }
 
 export function removeQueueItem(roomId: string, queueId: string): Promise<void> {
@@ -280,9 +296,95 @@ export function restoreQueueItems(roomId: string, items: QueueItem[]): Promise<v
 
 export async function transferHost(roomId: string, newHostUid: string): Promise<void> {
   const { db } = requireFirebase();
+  const user = await ensureUser();
+  const metaSnapshot = await get(ref(db, `rooms/${roomId}/meta`));
+  if (!metaSnapshot.exists()) throw new Error('Phòng không còn tồn tại.');
+  const meta = metaSnapshot.val() as RoomMeta;
+  if (meta.hostUid === newHostUid) return;
   const listing = await get(ref(db, `publicRooms/${roomId}`));
-  const updates: Record<string, unknown> = { [`rooms/${roomId}/meta/hostUid`]: newHostUid };
-  if (listing.exists()) updates[`publicRooms/${roomId}/ownerUid`] = newHostUid;
+  const isManualTransfer = user.uid === meta.hostUid;
+
+  if (isManualTransfer) {
+    const updates: Record<string, unknown> = {
+      [`rooms/${roomId}/meta/hostUid`]: newHostUid,
+      [`rooms/${roomId}/meta/coHosts/${newHostUid}`]: null,
+      [`rooms/${roomId}/meta/coHosts/${meta.hostUid}`]: true,
+    };
+    if (listing.exists()) updates[`publicRooms/${roomId}/ownerUid`] = newHostUid;
+    await update(ref(db), updates);
+    return;
+  }
+
+  // During automatic takeover, update meta first. Public-room rules only allow
+  // the new owner to update the listing after this write has succeeded.
+  await update(ref(db), { [`rooms/${roomId}/meta/hostUid`]: newHostUid });
+  const followUp: Record<string, unknown> = {
+    [`rooms/${roomId}/members/${newHostUid}/role`]: 'host',
+    [`rooms/${roomId}/members/${meta.hostUid}/role`]: 'listener',
+  };
+  if (listing.exists()) followUp[`publicRooms/${roomId}/ownerUid`] = newHostUid;
+  await update(ref(db), followUp);
+}
+
+export function normalizeHistory(value: Record<string, Omit<QueueHistoryItem, 'historyId'>> | null): QueueHistoryItem[] {
+  return value
+    ? Object.entries(value)
+      .map(([historyId, item]) => ({ ...item, historyId }))
+      .sort((a, b) => b.playedAt - a.playedAt)
+      .slice(0, 50)
+    : [];
+}
+
+function appendHistoryUpdate(
+  db: Database,
+  roomId: string,
+  current: QueueItem | undefined,
+  uid: string,
+  history: QueueHistoryItem[],
+  updates: Record<string, unknown>,
+): void {
+  if (!current) return;
+  const historyRef = push(ref(db, `rooms/${roomId}/history`));
+  updates[`rooms/${roomId}/history/${historyRef.key!}`] = {
+    id: current.id,
+    title: current.title,
+    channel: current.channel ?? '',
+    thumbnail: current.thumbnail,
+    duration: current.duration ?? 0,
+    playedAt: serverTimestamp(),
+    playedBy: uid,
+    addedByName: current.addedByName ?? '',
+  };
+  history.slice(49).forEach((item) => {
+    updates[`rooms/${roomId}/history/${item.historyId}`] = null;
+  });
+}
+
+export async function selectQueueVideo(
+  roomId: string,
+  uid: string,
+  item: QueueItem,
+  previous: QueueItem | undefined,
+  volume: number,
+  removePrevious: boolean,
+  history: QueueHistoryItem[],
+): Promise<void> {
+  const { db } = requireFirebase();
+  const updates: Record<string, unknown> = {};
+  if (previous && previous.queueId !== item.queueId) {
+    appendHistoryUpdate(db, roomId, previous, uid, history, updates);
+    if (removePrevious) updates[`rooms/${roomId}/queue/${previous.queueId}`] = null;
+  }
+  updates[`rooms/${roomId}/playback`] = {
+    video: { id: item.id, title: item.title, channel: item.channel ?? '', thumbnail: item.thumbnail, duration: item.duration ?? 0 },
+    status: 'paused',
+    position: 0,
+    volume,
+    updatedAt: serverTimestamp() as unknown as number,
+    revision: Date.now(),
+    changedBy: uid,
+    reason: 'queue',
+  } satisfies PlaybackState;
   await update(ref(db), updates);
 }
 
@@ -323,6 +425,7 @@ export async function advanceQueue(
   currentVideoId?: string,
   volume = 80,
   loopMode: LoopMode = 'off',
+  history: QueueHistoryItem[] = [],
 ): Promise<void> {
   const { db } = requireFirebase();
   const foundIndex = currentVideoId ? queue.findIndex((item) => item.id === currentVideoId) : -1;
@@ -330,6 +433,7 @@ export async function advanceQueue(
   const current = queue[currentIndex];
   const next = queue.length > 1 ? queue[(currentIndex + 1) % queue.length] : undefined;
   const updates: Record<string, unknown> = {};
+  appendHistoryUpdate(db, roomId, current, uid, history, updates);
   if (current && loopMode === 'off') updates[`rooms/${roomId}/queue/${current.queueId}`] = null;
   if (current && loopMode === 'all' && next) {
     updates[`rooms/${roomId}/queue/${current.queueId}/addedAt`] = Date.now();
