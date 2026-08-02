@@ -171,6 +171,19 @@ function RolePicker({ value, onChange }: { value: 'listener' | 'dj'; onChange: (
   );
 }
 
+function CreatorLinks({ compact = false }: { compact?: boolean }) {
+  return (
+    <div className={`creator-links ${compact ? 'compact' : ''}`}>
+      {!compact && <span className="creator-name">Created by <strong>HFake</strong></span>}
+      <nav aria-label="Liên hệ HFake">
+        <a href="https://www.facebook.com/HFakeee/" target="_blank" rel="noreferrer" aria-label="Facebook của HFake"><i aria-hidden="true">f</i><span>Facebook</span></a>
+        <a href="https://www.linkedin.com/in/hfake/" target="_blank" rel="noreferrer" aria-label="LinkedIn của HFake"><i aria-hidden="true">in</i><span>LinkedIn</span></a>
+        <a href="mailto:huynguyenquoc.work@gmail.com" aria-label="Gửi email cho HFake"><i aria-hidden="true">@</i><span>Email</span></a>
+      </nav>
+    </div>
+  );
+}
+
 export default function App() {
   const route = useHashRoute();
   return route.page === 'room' ? <RoomPage roomId={route.roomId} /> : <HomePage />;
@@ -305,7 +318,7 @@ function HomePage() {
         <article><span>02</span><ListMusic /><h3>Cùng xây queue</h3><p>Dán link hoặc nhập từ khóa rồi Enter để tìm kiếm YouTube.</p></article>
         <article><span>03</span><WandSparkles /><h3>Phát đồng bộ</h3><p>Play, pause, seek và SponsorBlock áp dụng cho toàn bộ phòng.</p></article>
       </section>
-      <footer className="home-footer"><Brand /><span>Một không gian nghe YouTube sạch và cộng tác.</span></footer>
+      <footer className="home-footer"><Brand /><span>Một không gian nghe YouTube sạch và cộng tác.</span><CreatorLinks /></footer>
     </main>
   );
 }
@@ -1851,6 +1864,11 @@ function RoomPage({ roomId }: { roomId: string }) {
           </div>
         </aside>
       </div>
+
+      <footer className="room-footer">
+        <span>Syncbox được xây dựng bởi <strong>HFake</strong></span>
+        <CreatorLinks compact />
+      </footer>
 
       {connectionOpen && (
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setConnectionOpen(false); }}>

@@ -123,7 +123,16 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 .how svg { color: var(--accent); }
 .how h3 { margin: 34px 0 10px; font: 600 17px 'Space Grotesk', sans-serif; }
 .how p { margin: 0; color: #858397; font-size: 12px; line-height: 1.7; }
-.home-footer { width: min(1200px, calc(100% - 48px)); display: flex; align-items: center; justify-content: space-between; margin: auto; padding: 30px 0; border-top: 1px solid var(--line); color: #696779; font-size: 11px; }
+.home-footer { width: min(1200px, calc(100% - 48px)); display: flex; align-items: center; justify-content: space-between; margin: auto; padding: 36px 0; border-top: 1px solid var(--line); color: #777486; font-size: 12px; }
+.creator-links { display: flex; align-items: center; gap: 15px; }
+.creator-name { color: #858193; font-size: 12px; white-space: nowrap; }
+.creator-name strong { color: #b9b4c8; font-family: 'Space Grotesk',sans-serif; font-weight: 650; }
+.creator-links nav { display: flex; align-items: center; gap: 8px; }
+.creator-links a { height: 38px; display: inline-flex; align-items: center; gap: 8px; padding: 0 12px 0 7px; border: 1px solid rgba(255,255,255,.08); border-radius: 11px; color: #9995a7; background: rgba(255,255,255,.03); font-size: 11px; font-weight: 600; text-decoration: none; transition: color .18s,border-color .18s,background .18s,transform .18s; }
+.creator-links a:hover { color: #eeeaf7; border-color: rgba(139,92,246,.35); background: rgba(139,92,246,.09); transform: translateY(-1px); }
+.creator-links a i { min-width: 24px; height: 24px; display: grid; place-items: center; border-radius: 7px; color: #d7ccff; background: rgba(139,92,246,.17); font: 700 11px 'Space Grotesk',sans-serif; font-style: normal; text-transform: lowercase; }
+.creator-links a:nth-child(2) i { color: #a7e8ef; background: rgba(56,214,232,.12); font-size: 9px; }
+.creator-links a:nth-child(3) i { color: #f1c2d0; background: rgba(244,114,182,.11); }
 
 /* Shared states */
 .center-screen { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 13px; color: var(--muted); background: radial-gradient(circle, rgba(139,92,246,.08), transparent 34%); }
@@ -607,10 +616,17 @@ button:disabled { opacity: .42; cursor: not-allowed; }
   .member-roster.collapsed .roster-member:hover .member-admin { display: none; }
 }
 
+.room-footer { min-height: 50px; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 7px 30px; border-top: 1px solid var(--line); color: #777386; background: rgba(9,9,16,.95); }
+.room-footer > span { font-size: 10px; }
+.room-footer > span strong { color: #c9c2dc; font-family: 'Space Grotesk',sans-serif; font-weight: 650; }
+.room-footer .creator-links a { height: 32px; font-size: 9px; }
+.room-footer .creator-links a i { min-width: 20px; height: 20px; font-size: 9px; }
+.room-footer .creator-links a:nth-child(2) i { font-size: 7px; }
+
 @media (min-width: 1201px) {
   body:has(.room-page) { overflow: hidden; }
   .room-page { height: 100dvh; overflow: hidden; }
-  .room-shell { height: calc(100dvh - 76px); min-height: 0; overflow: hidden; }
+  .room-shell { height: calc(100dvh - 126px); min-height: 0; overflow: hidden; }
   .player-column {
     height: 100%;
     display: grid;
@@ -639,7 +655,7 @@ button:disabled { opacity: .42; cursor: not-allowed; }
   .room-note { display: none; }
   .side-panel { height: 100%; overflow: hidden; }
   .member-roster { height: 100%; }
-  .panel-body { height: calc(100dvh - 140px); }
+  .panel-body { height: calc(100dvh - 190px); }
   .roster-scroll { height: auto; }
 }
 
@@ -702,6 +718,15 @@ button:disabled { opacity: .42; cursor: not-allowed; }
   .public-grid { grid-template-columns: 1fr; }
   .public-heading > small { display: none; }
   .home-footer > span { display: none; }
+  .home-footer { gap: 15px; }
+  .home-footer .creator-links { margin-left: auto; }
+  .home-footer .creator-name, .home-footer .creator-links a span { display: none; }
+  .home-footer .creator-links a { width: 31px; padding: 0; justify-content: center; }
+  .room-footer { padding-inline: 14px; }
+  .room-footer > span { font-size: 9px; }
+  .room-footer .creator-links { margin-left: auto; }
+  .room-footer .creator-links a span { display: none; }
+  .room-footer .creator-links a { width: 32px; padding: 0; justify-content: center; }
   .room-header { height: 64px; padding: 0 13px; }
   .room-header .brand > span:last-child { display: none; }
   .room-header .brand-mark { width: 34px; height: 34px; }
