@@ -1,5 +1,5 @@
 import type { SponsorSegment, VideoItem } from '../types';
-import { getFirebaseIdToken } from './firebase';
+import { getFirebaseAppCheckToken, getFirebaseIdToken } from './firebase';
 import { fallbackVideoMetadata } from './youtube';
 
 const baseUrl = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
@@ -13,7 +13,10 @@ export interface SearchQuota {
 
 async function getJson<T>(path: string): Promise<T> {
   if (!baseUrl) throw new Error('Chưa cấu hình VITE_API_BASE_URL');
-  const response = await fetch(`${baseUrl}${path}`);
+  const appCheckToken = await getFirebaseAppCheckToken().catch(() => '');
+  const response = await fetch(`${baseUrl}${path}`, {
+    headers: appCheckToken ? { 'X-Firebase-AppCheck': appCheckToken } : undefined,
+  });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error((body as { error?: string }).error ?? 'Yêu cầu thất bại');
   return body as T;
@@ -22,11 +25,13 @@ async function getJson<T>(path: string): Promise<T> {
 export async function postAuthenticatedJson<T>(path: string, payload: unknown): Promise<T> {
   if (!baseUrl) throw new Error('Chưa cấu hình VITE_API_BASE_URL');
   const token = await getFirebaseIdToken();
+  const appCheckToken = await getFirebaseAppCheckToken().catch(() => '');
   const response = await fetch(`${baseUrl}${path}`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
+      ...(appCheckToken ? { 'X-Firebase-AppCheck': appCheckToken } : {}),
     },
     body: JSON.stringify(payload),
   });

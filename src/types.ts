@@ -89,6 +89,27 @@ export interface ChatMessage {
   sentAt: number;
 }
 
+export type ActivityType =
+  | 'queue_add'
+  | 'queue_remove'
+  | 'queue_clear'
+  | 'track_change'
+  | 'video_error'
+  | 'loop_change'
+  | 'settings_change'
+  | 'owner_transfer'
+  | 'role_change'
+  | 'moderation';
+
+export interface ActivityLogItem {
+  id: string;
+  type: ActivityType;
+  actorUid: string;
+  actorName: string;
+  text: string;
+  createdAt: number;
+}
+
 export interface SponsorSegment {
   segment: [number, number];
   category: string;

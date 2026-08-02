@@ -29,6 +29,7 @@ import {
   RefreshCw,
   Repeat2,
   Search,
+  ScrollText,
   Settings2,
   Share2,
   ShieldCheck,
@@ -60,10 +61,12 @@ import {
   joinRoom,
   kickMember,
   normalizeMembers,
+  normalizeActivity,
   normalizeHistory,
   normalizeMessages,
   normalizeQueue,
   removeQueueItem,
+  recordActivity,
   reorderQueue,
   renewRoomExpiration,
   restoreQueueItems,
@@ -90,7 +93,7 @@ import {
 import { VoiceClient, type VoiceConnectionState } from './lib/voice';
 import { formatDuration } from './lib/youtube';
 import { playPresenceSound, unlockSounds } from './lib/sounds';
-import type { BanRecord, ChatMessage, LoopMode, Member, PlaybackState, PublicRoom, QueueHistoryItem, QueueItem, Role, RoomMeta, SponsorSegment, VideoItem, VoicePresence } from './types';
+import type { ActivityLogItem, ActivityType, BanRecord, ChatMessage, LoopMode, Member, PlaybackState, PublicRoom, QueueHistoryItem, QueueItem, Role, RoomMeta, SponsorSegment, VideoItem, VoicePresence } from './types';
 
 const EMPTY_PLAYBACK: PlaybackState = {
   video: null,
@@ -353,6 +356,15 @@ function chatTimestampIso(sentAt: number): string | undefined {
   return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
 }
 
+function youtubeErrorDescription(code: number): { message: string; retryable: boolean } {
+  if (code === 2) return { message: 'Link hoặc mã video không hợp lệ.', retryable: false };
+  if (code === 5) return { message: 'Trình duyệt gặp lỗi khi giải mã video.', retryable: true };
+  if (code === 100) return { message: 'Video đã bị xoá hoặc đang ở chế độ riêng tư.', retryable: false };
+  if (code === 101 || code === 150) return { message: 'Chủ video không cho phép phát trên website khác.', retryable: false };
+  if (code === 153) return { message: 'YouTube từ chối cấu hình phát nhúng của video này.', retryable: false };
+  return { message: `YouTube không thể phát video này (mã lỗi ${code}).`, retryable: true };
+}
+
 function RoomPage({ roomId }: { roomId: string }) {
   const [uid, setUid] = useState('');
   const [meta, setMeta] = useState<RoomMeta | null>(null);
@@ -367,10 +379,11 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [voiceDeafened, setVoiceDeafened] = useState(false);
   const [speakingUids, setSpeakingUids] = useState<Set<string>>(() => new Set());
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [activity, setActivity] = useState<ActivityLogItem[]>([]);
   const [unreadChatCount, setUnreadChatCount] = useState(0);
   const [bans, setBans] = useState<BanRecord[]>([]);
   const [segments, setSegments] = useState<SponsorSegment[]>([]);
-  const [activePanel, setActivePanel] = useState<'queue' | 'chat'>('queue');
+  const [activePanel, setActivePanel] = useState<'queue' | 'chat' | 'activity'>('queue');
   const [queueView, setQueueView] = useState<'upcoming' | 'history'>('upcoming');
   const [sidePanelCollapsed, setSidePanelCollapsed] = useState(() => localStorage.getItem('syncbox:side-panel-collapsed') === '1');
   const [rosterCollapsed, setRosterCollapsed] = useState(() => localStorage.getItem('syncbox:roster-collapsed') === '1');
@@ -406,12 +419,15 @@ function RoomPage({ roomId }: { roomId: string }) {
   const handledEndedRevision = useRef(0);
   const playerRecovery = useRef({ videoId: '', attempts: 0 });
   const nonRetryablePlayerVideo = useRef('');
+  const playerFailureTimer = useRef<number | undefined>(undefined);
+  const skippedFailedVideo = useRef('');
   const undoTimer = useRef<number | undefined>(undefined);
   const voiceClientRef = useRef<VoiceClient | null>(null);
   const previousVoiceUids = useRef<Set<string> | null>(null);
   const voiceRecoveryAttempts = useRef(0);
   const voiceShouldRecover = useRef(false);
   const joinVoiceRef = useRef<() => Promise<void>>(async () => undefined);
+  const skipRef = useRef<(mode?: LoopMode, activityText?: string) => Promise<void>>(async () => undefined);
   const databaseWasDisconnected = useRef(false);
   const messagesRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollChat = useRef(true);
@@ -431,6 +447,14 @@ function RoomPage({ roomId }: { roomId: string }) {
   const canManageQueue = isHost || me?.role === 'dj';
   const canControlPlayback = isHost || me?.role === 'dj';
   const canAdd = canManageQueue || Boolean(meta?.allowListenersToAdd);
+  const playbackCoordinatorUid = useMemo(() => {
+    if (members.some((member) => member.uid === meta?.hostUid && member.online)) return meta?.hostUid ?? '';
+    return members
+      .filter((member) => member.online && (Boolean(meta?.coHosts?.[member.uid]) || member.role === 'dj'))
+      .map((member) => member.uid)
+      .sort()[0] ?? '';
+  }, [members, meta?.coHosts, meta?.hostUid]);
+  const isPlaybackCoordinator = Boolean(uid && uid === playbackCoordinatorUid);
   const sponsorCategoryKey = meta?.sponsorCategories.join(',') ?? 'sponsor';
   const loopMode: LoopMode = meta?.loopMode ?? 'off';
   const queueDuration = useMemo(() => queue.reduce((total, item) => total + (item.duration ?? 0), 0), [queue]);
@@ -540,7 +564,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     });
   }
 
-  function openSidePanel(panel: 'queue' | 'chat') {
+  function openSidePanel(panel: 'queue' | 'chat' | 'activity') {
     setActivePanel(panel);
     if (panel === 'chat') {
       shouldAutoScrollChat.current = true;
@@ -550,6 +574,11 @@ function RoomPage({ roomId }: { roomId: string }) {
       setSidePanelCollapsed(false);
       localStorage.setItem('syncbox:side-panel-collapsed', '0');
     }
+  }
+
+  function logActivity(type: ActivityType, text: string) {
+    if (!me) return;
+    void recordActivity(roomId, me, type, text).catch(() => undefined);
   }
 
   function openProfile() {
@@ -590,6 +619,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     lastChatMessageId.current = null;
     setUnreadChatCount(0);
     setMessages([]);
+    setActivity([]);
     setQueueHistory([]);
     async function connect() {
       try {
@@ -631,6 +661,9 @@ function RoomPage({ roomId }: { roomId: string }) {
             }
             setMessages(nextMessages);
           }, handleAccessError),
+          subscribeRoom<Record<string, Omit<ActivityLogItem, 'id'>> | null>(roomId, 'activity', (value) => {
+            setActivity(normalizeActivity(value));
+          }, () => setActivity([])),
         );
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : 'Không thể kết nối đến phòng.');
@@ -685,7 +718,10 @@ function RoomPage({ roomId }: { roomId: string }) {
     return subscribeRoom<Record<string, BanRecord> | null>(roomId, 'bans', (value) => setBans(value ? Object.values(value).sort((a, b) => b.bannedAt - a.bannedAt) : []));
   }, [isHost, roomId]);
 
-  useEffect(() => () => window.clearTimeout(undoTimer.current), []);
+  useEffect(() => () => {
+    window.clearTimeout(undoTimer.current);
+    window.clearTimeout(playerFailureTimer.current);
+  }, []);
 
   useEffect(() => {
     const updateFullscreen = () => {
@@ -717,10 +753,13 @@ function RoomPage({ roomId }: { roomId: string }) {
   useEffect(() => {
     if (!meta || !uid || !connected || (!isCoHost && me?.role !== 'dj') || members.some((member) => member.uid === meta.hostUid && member.online)) return;
     const timer = window.setTimeout(() => {
-      void transferHost(roomId, uid).then(() => setNotice({ message: 'Bạn đã tiếp quản Owner vì Owner cũ mất kết nối.', tone: 'success' })).catch(() => undefined);
+      void transferHost(roomId, uid).then(() => {
+        if (me?.name) void recordActivity(roomId, { uid, name: me.name }, 'owner_transfer', 'tự động tiếp quản Owner vì Owner cũ mất kết nối').catch(() => undefined);
+        setNotice({ message: 'Bạn đã tiếp quản Owner vì Owner cũ mất kết nối.', tone: 'success' });
+      }).catch(() => undefined);
     }, 15000);
     return () => window.clearTimeout(timer);
-  }, [connected, isCoHost, me?.role, members, meta, roomId, uid]);
+  }, [connected, isCoHost, me?.name, me?.role, members, meta, roomId, uid]);
 
   useEffect(() => {
     if (!connected || !uid) return;
@@ -792,6 +831,8 @@ function RoomPage({ roomId }: { roomId: string }) {
     if (playerRecovery.current.videoId !== playback.video.id) {
       playerRecovery.current = { videoId: playback.video.id, attempts: 0 };
       nonRetryablePlayerVideo.current = '';
+      skippedFailedVideo.current = '';
+      window.clearTimeout(playerFailureTimer.current);
     }
 
     const shouldStartQueue = playback.status === 'paused' && playback.reason === 'queue' && canControlPlayback;
@@ -808,21 +849,36 @@ function RoomPage({ roomId }: { roomId: string }) {
     };
     const firstRetry = window.setTimeout(retry, 700);
     const retryTimer = window.setInterval(retry, 1800);
-    const recoveryDelay = playerRecovery.current.attempts === 0 ? 10000 : 18000;
+    const recoveryDelay = playerRecovery.current.attempts === 0 ? 8000 : 12000;
     const issueTimer = window.setTimeout(() => {
       const player = playerRef.current;
       const healthy = Boolean(player && player.videoId() === playback.video?.id && player.state() === 1);
       if (!healthy && (playback.status === 'playing' || playback.reason === 'queue')) {
         const videoId = playback.video?.id ?? '';
         const recovery = playerRecovery.current;
-        if (nonRetryablePlayerVideo.current === videoId) return;
+        if (nonRetryablePlayerVideo.current === videoId) {
+          if (isPlaybackCoordinator && skippedFailedVideo.current !== videoId) {
+            skippedFailedVideo.current = videoId;
+            playerFailureTimer.current = window.setTimeout(() => {
+              void skipRef.current('off', `tự bỏ qua “${playback.video?.title ?? 'video'}” vì YouTube từ chối phát`);
+            }, 3500);
+          }
+          return;
+        }
         if (videoId && recovery.videoId === videoId && recovery.attempts < 2) {
           recovery.attempts += 1;
           if (playback.status === 'paused' && playback.reason === 'queue' && canControlPlayback) pendingQueueStart.current = videoId;
           setPlayerAttempt((attempt) => attempt + 1);
           return;
         }
-        setPlayerIssue('Player chưa thể tải hoặc phát video sau khi đã tự khôi phục. Mạng đang dùng có thể đang chặn YouTube.');
+        const message = 'Player chưa thể tải hoặc phát video sau 2 lần tự khôi phục.';
+        setPlayerIssue(isPlaybackCoordinator ? `${message} Syncbox sẽ bỏ qua bài này.` : message);
+        if (isPlaybackCoordinator && skippedFailedVideo.current !== videoId) {
+          skippedFailedVideo.current = videoId;
+          playerFailureTimer.current = window.setTimeout(() => {
+            void skipRef.current('off', `tự bỏ qua “${playback.video?.title ?? 'video'}” vì không tải được`);
+          }, 3500);
+        }
       }
     }, recoveryDelay);
     return () => {
@@ -830,7 +886,7 @@ function RoomPage({ roomId }: { roomId: string }) {
       window.clearInterval(retryTimer);
       window.clearTimeout(issueTimer);
     };
-  }, [canControlPlayback, playback.reason, playback.revision, playback.status, playback.video, playerAttempt]);
+  }, [canControlPlayback, isPlaybackCoordinator, playback.reason, playback.revision, playback.status, playback.video, playerAttempt]);
 
   useEffect(() => {
     conformPlayer();
@@ -858,6 +914,20 @@ function RoomPage({ roomId }: { roomId: string }) {
   }, [playback, serverOffset]);
 
   useEffect(() => {
+    if (!isPlaybackCoordinator || playback.status !== 'playing' || !playback.video) return undefined;
+    const timer = window.setInterval(() => {
+      const duration = playback.video?.duration || playerRef.current?.duration() || 0;
+      if (duration <= 0 || expectedPosition(playback, serverOffset) < duration + 0.75) return;
+      if (handledEndedRevision.current === playback.revision) return;
+      handledEndedRevision.current = playback.revision;
+      void skipRef.current(loopMode).catch((cause) => {
+        showNotice(cause instanceof Error ? cause.message : 'Không thể tự chuyển bài.', 'error');
+      });
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [isPlaybackCoordinator, loopMode, playback, serverOffset]);
+
+  useEffect(() => {
     const timer = window.setInterval(() => {
       if (!playback.video || playback.status !== 'playing') return;
       const player = playerRef.current;
@@ -879,9 +949,15 @@ function RoomPage({ roomId }: { roomId: string }) {
 
   async function addToQueue(videos: VideoItem[]) {
     if (!me) return;
+    const remainingSlots = Math.max(0, 100 - queue.length);
+    if (remainingSlots === 0) {
+      showNotice('Queue đã đạt giới hạn 100 bài.', 'error');
+      return;
+    }
     const existingIds = new Set(queue.map((item) => item.id));
     if (playback.video?.id) existingIds.add(playback.video.id);
-    const unique = videos.filter((video, index) => !existingIds.has(video.id) && videos.findIndex((item) => item.id === video.id) === index);
+    const uniqueCandidates = videos.filter((video, index) => !existingIds.has(video.id) && videos.findIndex((item) => item.id === video.id) === index);
+    const unique = uniqueCandidates.slice(0, remainingSlots);
     if (!unique.length) {
       showNotice('Video này đã có trong queue.', 'error');
       return;
@@ -895,7 +971,11 @@ function RoomPage({ roomId }: { roomId: string }) {
       pendingQueueStart.current = result.added[0].id;
       await writePlayback(roomId, uid, { video: result.added[0], status: 'paused', position: 0, reason: 'queue' });
     }
-    showNotice(result.duplicates.length > 0
+    logActivity('queue_add', `thêm ${result.added.length === 1 ? `“${result.added[0].title}”` : `${result.added.length} bài`} vào queue`);
+    const skippedForCapacity = Math.max(0, uniqueCandidates.length - unique.length);
+    showNotice(skippedForCapacity > 0
+      ? `Đã thêm ${result.added.length} video · queue đã đạt giới hạn 100 bài.`
+      : result.duplicates.length > 0
       ? `Đã thêm ${result.added.length} video · bỏ qua ${result.duplicates.length} bài trùng.`
       : `Đã thêm ${result.added.length} video vào queue.`);
   }
@@ -955,6 +1035,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   async function handleRemoveQueueItem(item: QueueItem) {
     try {
       await removeQueueItem(roomId, item.queueId);
+      logActivity('queue_remove', `xoá “${item.title}” khỏi queue`);
       offerUndo([item], `Đã xóa “${item.title}”`);
     } catch (cause) {
       showNotice(cause instanceof Error ? cause.message : 'Không thể xóa bài.', 'error');
@@ -966,6 +1047,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     const removed = [...queue];
     try {
       await clearQueue(roomId);
+      logActivity('queue_clear', `xoá ${removed.length} bài khỏi queue`);
       offerUndo(removed, `Đã xóa ${removed.length} bài khỏi queue`);
     } catch (cause) {
       showNotice(cause instanceof Error ? cause.message : 'Không thể xóa queue.', 'error');
@@ -1003,7 +1085,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     }
   }
 
-  async function skip(mode: LoopMode = 'off') {
+  async function skip(mode: LoopMode = 'off', activityText?: string) {
     if (!canControlPlayback) return;
     const foundIndex = playback.video ? queue.findIndex((item) => item.id === playback.video?.id) : -1;
     const currentIndex = foundIndex >= 0 ? foundIndex : 0;
@@ -1012,16 +1094,20 @@ function RoomPage({ roomId }: { roomId: string }) {
     const target = mode === 'one' || (mode === 'all' && !next) ? current : next;
     pendingQueueStart.current = target?.id ?? null;
     await advanceQueue(roomId, uid, queue, playback.video?.id, playback.volume, mode, queueHistory);
+    logActivity(activityText ? 'video_error' : 'track_change', activityText ?? `chuyển sang ${target ? `“${target.title}”` : 'cuối queue'}`);
     if (target && target.id === playback.video?.id) {
       playerRef.current?.seek(0);
       playerRef.current?.play();
     }
   }
 
+  skipRef.current = skip;
+
   async function cycleLoopMode() {
     if (!isHost) return;
     const next: LoopMode = loopMode === 'off' ? 'one' : loopMode === 'one' ? 'all' : 'off';
     await updateRoomMeta(roomId, { loopMode: next });
+    logActivity('loop_change', `đổi chế độ lặp thành ${next === 'off' ? 'Tắt' : next === 'one' ? 'Lặp một bài' : 'Lặp toàn bộ'}`);
   }
 
   async function seekTo(position: number) {
@@ -1064,6 +1150,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     pendingQueueStart.current = item.id;
     try {
       await selectQueueVideo(roomId, uid, item, previous, playback.volume, loopMode === 'off', queueHistory);
+      logActivity('track_change', `chọn phát “${item.title}”`);
       if (item.id === playback.video?.id) {
         playerRef.current?.seek(0);
         playerRef.current?.play();
@@ -1092,6 +1179,8 @@ function RoomPage({ roomId }: { roomId: string }) {
     if (playback.video?.id !== videoId) return;
     playerRecovery.current = { videoId, attempts: 0 };
     nonRetryablePlayerVideo.current = '';
+    skippedFailedVideo.current = '';
+    window.clearTimeout(playerFailureTimer.current);
     setNeedsActivation(false);
     setPlayerIssue('');
     if (playback.status !== 'paused' || playback.reason !== 'queue' || !canControlPlayback) return;
@@ -1104,7 +1193,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   }, [canControlPlayback, playback.reason, playback.status, playback.video?.id, roomId, uid]);
 
   function handlePlayerEnded() {
-    if (!canControlPlayback || handledEndedRevision.current === playback.revision) return;
+    if (!isPlaybackCoordinator || handledEndedRevision.current === playback.revision) return;
     handledEndedRevision.current = playback.revision;
     void skip(loopMode).catch((cause) => {
       showNotice(cause instanceof Error ? cause.message : 'Không thể tự chuyển bài.', 'error');
@@ -1118,6 +1207,8 @@ function RoomPage({ roomId }: { roomId: string }) {
     }
     setPlayerIssue('');
     setNeedsActivation(false);
+    skippedFailedVideo.current = '';
+    window.clearTimeout(playerFailureTimer.current);
     if (playback.status === 'paused' && playback.reason === 'queue' && playback.video) {
       pendingQueueStart.current = playback.video.id;
     }
@@ -1125,10 +1216,24 @@ function RoomPage({ roomId }: { roomId: string }) {
   }
 
   function handlePlayerError(code: number) {
-    if (playback.video && [2, 100, 101, 150, 153].includes(code)) {
-      nonRetryablePlayerVideo.current = playback.video.id;
+    if (!playback.video) return;
+    const videoId = playback.video.id;
+    const failure = youtubeErrorDescription(code);
+    window.clearTimeout(playerFailureTimer.current);
+    if (failure.retryable && playerRecovery.current.attempts < 2) {
+      playerRecovery.current.attempts += 1;
+      setPlayerIssue(`${failure.message} Đang thử lại (${playerRecovery.current.attempts}/2)…`);
+      playerFailureTimer.current = window.setTimeout(() => setPlayerAttempt((attempt) => attempt + 1), 1200 * playerRecovery.current.attempts);
+      return;
     }
-    setPlayerIssue(`YouTube không thể phát video này (mã lỗi ${code}).`);
+    nonRetryablePlayerVideo.current = videoId;
+    setPlayerIssue(isPlaybackCoordinator ? `${failure.message} Syncbox sẽ tự chuyển bài.` : failure.message);
+    if (isPlaybackCoordinator && skippedFailedVideo.current !== videoId) {
+      skippedFailedVideo.current = videoId;
+      playerFailureTimer.current = window.setTimeout(() => {
+        void skip('off', `tự bỏ qua “${playback.video?.title ?? 'video'}” · ${failure.message}`);
+      }, 3500);
+    }
   }
 
   async function submitChat(event: FormEvent) {
@@ -1174,6 +1279,7 @@ function RoomPage({ roomId }: { roomId: string }) {
           : meta?.sponsorCategories?.length ? meta.sponsorCategories : ['sponsor'],
         expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
       });
+      logActivity('settings_change', 'cập nhật cài đặt phòng');
       setSettingsOpen(false);
       showNotice('Đã lưu cài đặt phòng.');
     } catch (cause) {
@@ -1196,6 +1302,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     if (!window.confirm(`Chuyển quyền Owner cho ${member.name}?\n\nBạn sẽ trở thành Co-host và ${member.name} sẽ có toàn quyền quản lý phòng.`)) return;
     try {
       await transferHost(roomId, member.uid);
+      logActivity('owner_transfer', `chuyển quyền Owner cho ${member.name}`);
       showNotice(`${member.name} hiện là Owner mới · bạn đã chuyển thành Co-host.`);
     } catch (cause) {
       showNotice(cause instanceof Error ? cause.message : 'Không thể chuyển Owner.', 'error');
@@ -1206,6 +1313,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     if (!isOwner) return;
     try {
       await updateCoHost(roomId, member.uid, enabled);
+      logActivity('role_change', `${enabled ? 'cấp' : 'thu hồi'} quyền Co-host ${enabled ? 'cho' : 'của'} ${member.name}`);
       showNotice(enabled ? `${member.name} hiện là Co-host.` : `Đã thu hồi quyền Co-host của ${member.name}.`);
     } catch (cause) {
       showNotice(cause instanceof Error ? cause.message : 'Không thể cập nhật Co-host.', 'error');
@@ -1307,6 +1415,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     if (!canModerate(member) || !window.confirm(`Đưa ${member.name} khỏi phòng? Người này vẫn có thể tham gia lại.`)) return;
     try {
       await kickMember(roomId, member.uid);
+      logActivity('moderation', `đưa ${member.name} khỏi phòng`);
       showNotice(`Đã đưa ${member.name} khỏi phòng.`);
     } catch (cause) {
       showNotice(cause instanceof Error ? cause.message : 'Không thể kick thành viên.', 'error');
@@ -1317,6 +1426,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     if (!canModerate(member) || !window.confirm(`Cấm ${member.name} tham gia lại phòng này?`)) return;
     try {
       await banMember(roomId, member, uid);
+      logActivity('moderation', `cấm ${member.name} tham gia phòng`);
       showNotice(`Đã cấm ${member.name}.`);
     } catch (cause) {
       showNotice(cause instanceof Error ? cause.message : 'Không thể ban thành viên.', 'error');
@@ -1520,7 +1630,8 @@ function RoomPage({ roomId }: { roomId: string }) {
           <div className="panel-tabs">
             <button className={activePanel === 'queue' ? 'active' : ''} title="Queue" onClick={() => openSidePanel('queue')}><ListMusic /><b>Queue</b><span>{queue.length}</span></button>
             <button className={activePanel === 'chat' ? 'active' : ''} title={unreadChatCount > 0 ? `Chat · ${unreadChatCount} tin chưa đọc` : 'Chat'} onClick={() => openSidePanel('chat')}><MessageCircle /><b>Chat</b>{unreadChatCount > 0 && <span className="unread-badge" aria-label={`${unreadChatCount} tin chưa đọc`}>{unreadChatCount > 99 ? '99+' : unreadChatCount}</span>}</button>
-            <button className="panel-collapse" title={sidePanelCollapsed ? 'Mở Queue và Chat' : 'Thu gọn Queue và Chat'} aria-label={sidePanelCollapsed ? 'Mở Queue và Chat' : 'Thu gọn Queue và Chat'} onClick={toggleSidePanel}>
+            <button className={activePanel === 'activity' ? 'active' : ''} title="Hoạt động" onClick={() => openSidePanel('activity')}><ScrollText /><b>Log</b></button>
+            <button className="panel-collapse" title={sidePanelCollapsed ? 'Mở bảng bên' : 'Thu gọn bảng bên'} aria-label={sidePanelCollapsed ? 'Mở bảng bên' : 'Thu gọn bảng bên'} onClick={toggleSidePanel}>
               {sidePanelCollapsed ? <PanelRightOpen /> : <PanelRightClose />}
             </button>
           </div>
@@ -1591,7 +1702,7 @@ function RoomPage({ roomId }: { roomId: string }) {
               {isHost && (
                 <div className="sponsor-setting">
                   <div><Sparkles size={17} /><span><strong>SponsorBlock</strong><small>Tự động bỏ qua sponsor · <a href="https://sponsor.ajay.app" target="_blank" rel="noreferrer">dữ liệu cộng đồng</a></small></span></div>
-                  <label className="toggle"><input type="checkbox" checked={meta.sponsorBlockEnabled} onChange={(event) => void updateRoomMeta(roomId, { sponsorBlockEnabled: event.target.checked })} /><span /></label>
+                  <label className="toggle"><input type="checkbox" checked={meta.sponsorBlockEnabled} onChange={(event) => { const enabled = event.target.checked; void updateRoomMeta(roomId, { sponsorBlockEnabled: enabled }).then(() => logActivity('settings_change', `${enabled ? 'bật' : 'tắt'} SponsorBlock`)).catch((cause) => showNotice(cause instanceof Error ? cause.message : 'Không thể cập nhật SponsorBlock.', 'error')); }} /><span /></label>
                 </div>
               )}
             </div>
@@ -1624,6 +1735,27 @@ function RoomPage({ roomId }: { roomId: string }) {
                 </button>
               )}
               <form className="chat-form" onSubmit={submitChat}><input value={chatText} onChange={(event) => setChatText(event.target.value)} placeholder={meta.chatEnabled === false ? 'Chat đã bị tắt' : 'Nhắn cho mọi người…'} disabled={meta.chatEnabled === false} maxLength={500} /><button disabled={meta.chatEnabled === false}><ChevronRight /></button></form>
+            </div>
+          )}
+
+          {activePanel === 'activity' && (
+            <div className="panel-body activity-panel">
+              <div className="panel-title"><div><strong>Hoạt động phòng</strong><span>100 sự kiện gần nhất</span></div><ScrollText /></div>
+              <div className="activity-list">
+                {activity.map((item, index) => {
+                  const showDate = index === 0 || chatDateKey(activity[index - 1].createdAt) !== chatDateKey(item.createdAt);
+                  return (
+                    <Fragment key={item.id}>
+                      {showDate && <div className="chat-date-divider"><span>{formatChatDate(item.createdAt)}</span></div>}
+                      <article className={`activity-item ${item.type}`}>
+                        <i><ScrollText /></i>
+                        <div><p><strong>{item.actorUid === uid ? 'Bạn' : item.actorName}</strong> {item.text}</p><time dateTime={chatTimestampIso(item.createdAt)}>{formatChatTimestamp(item.createdAt)}</time></div>
+                      </article>
+                    </Fragment>
+                  );
+                })}
+                {activity.length === 0 && <div className="empty-list"><ScrollText /><span>Chưa có hoạt động</span><small>Các thay đổi quan trọng của phòng sẽ xuất hiện tại đây.</small></div>}
+              </div>
             </div>
           )}
 
@@ -1707,7 +1839,7 @@ function RoomPage({ roomId }: { roomId: string }) {
                       <div className="member-admin">
                         {isOwner && <button title="Thêm Co-host" onClick={() => void setCoHost(member, true)}><ShieldCheck size={14} /></button>}
                         {isOwner && <button title={member.online ? 'Chuyển quyền Owner' : 'Thành viên phải online để nhận Owner'} disabled={!member.online} onClick={() => void handOffHost(member)}><Crown size={14} /></button>}
-                        <RolePicker value={member.role === 'dj' ? 'dj' : 'listener'} onChange={(role) => void updateMemberRole(roomId, member.uid, role as Role).then(() => showNotice(`Đã cập nhật quyền của ${member.name}.`)).catch((cause) => showNotice(cause instanceof Error ? cause.message : 'Không thể cập nhật quyền.', 'error'))} />
+                        <RolePicker value={member.role === 'dj' ? 'dj' : 'listener'} onChange={(role) => void updateMemberRole(roomId, member.uid, role as Role).then(() => { logActivity('role_change', `${role === 'dj' ? 'cấp quyền DJ cho' : 'chuyển về Listener'} ${member.name}`); showNotice(`Đã cập nhật quyền của ${member.name}.`); }).catch((cause) => showNotice(cause instanceof Error ? cause.message : 'Không thể cập nhật quyền.', 'error'))} />
                         {canModerate(member) && <button className="moderation-button" title="Đưa khỏi phòng" onClick={() => void handleKick(member)}><UserMinus size={14} /></button>}
                         {canModerate(member) && <button className="moderation-button ban" title="Cấm khỏi phòng" onClick={() => void handleBan(member)}><Ban size={14} /></button>}
                       </div>

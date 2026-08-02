@@ -1,4 +1,5 @@
 import { initializeApp } from 'firebase/app';
+import { getToken, initializeAppCheck, ReCaptchaEnterpriseProvider, type AppCheck } from 'firebase/app-check';
 import { getAuth, onAuthStateChanged, signInAnonymously, type User } from 'firebase/auth';
 import {
   getDatabase,
@@ -15,7 +16,7 @@ import {
   type Database,
   type Unsubscribe,
 } from 'firebase/database';
-import type { BanRecord, ChatMessage, LoopMode, Member, PlaybackState, PublicRoom, QueueHistoryItem, QueueItem, Role, RoomMeta, VideoItem, VoicePresence } from '../types';
+import type { ActivityLogItem, ActivityType, BanRecord, ChatMessage, LoopMode, Member, PlaybackState, PublicRoom, QueueHistoryItem, QueueItem, Role, RoomMeta, VideoItem, VoicePresence } from '../types';
 
 const config = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -27,6 +28,14 @@ const config = {
 
 export const firebaseConfigured = Object.values(config).every(Boolean);
 const app = firebaseConfigured ? initializeApp(config) : null;
+const appCheckSiteKey = import.meta.env.VITE_FIREBASE_APPCHECK_SITE_KEY?.trim();
+if (app && appCheckSiteKey && import.meta.env.DEV && import.meta.env.VITE_FIREBASE_APPCHECK_DEBUG_TOKEN) {
+  (globalThis as typeof globalThis & { FIREBASE_APPCHECK_DEBUG_TOKEN?: string | boolean }).FIREBASE_APPCHECK_DEBUG_TOKEN =
+    import.meta.env.VITE_FIREBASE_APPCHECK_DEBUG_TOKEN === 'true' ? true : import.meta.env.VITE_FIREBASE_APPCHECK_DEBUG_TOKEN;
+}
+const appCheck: AppCheck | null = app && appCheckSiteKey
+  ? initializeAppCheck(app, { provider: new ReCaptchaEnterpriseProvider(appCheckSiteKey), isTokenAutoRefreshEnabled: true })
+  : null;
 const auth = app ? getAuth(app) : null;
 export const database: Database | null = app ? getDatabase(app) : null;
 
@@ -64,6 +73,11 @@ export async function ensureUser(): Promise<User> {
 
 export async function getFirebaseIdToken(): Promise<string> {
   return (await ensureUser()).getIdToken();
+}
+
+export async function getFirebaseAppCheckToken(): Promise<string> {
+  if (!appCheck) return '';
+  return (await getToken(appCheck)).token;
 }
 
 function makeRoomId(): string {
@@ -463,6 +477,23 @@ export async function sendChat(roomId: string, uid: string, name: string, text: 
   });
 }
 
+export async function recordActivity(
+  roomId: string,
+  actor: Pick<Member, 'uid' | 'name'>,
+  type: ActivityType,
+  text: string,
+): Promise<void> {
+  const { db } = requireFirebase();
+  const activityRef = push(ref(db, `rooms/${roomId}/activity`));
+  await set(activityRef, {
+    type,
+    actorUid: actor.uid,
+    actorName: actor.name,
+    text: text.trim().slice(0, 240),
+    createdAt: serverTimestamp(),
+  });
+}
+
 export function updateRoomMeta(roomId: string, patch: Partial<RoomMeta>): Promise<void> {
   const { db } = requireFirebase();
   return update(ref(db, `rooms/${roomId}/meta`), patch);
@@ -506,4 +537,12 @@ export function normalizeMessages(value: Record<string, Omit<ChatMessage, 'id'>>
     .map(([id, message]) => ({ ...message, id }))
     .sort((a, b) => a.sentAt - b.sentAt)
     .slice(-100);
+}
+
+export function normalizeActivity(value: Record<string, Omit<ActivityLogItem, 'id'>> | null): ActivityLogItem[] {
+  if (!value) return [];
+  return Object.entries(value)
+    .map(([id, item]) => ({ ...item, id }))
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, 100);
 }

@@ -5,6 +5,8 @@ interface Env {
   FIREBASE_DATABASE_URL?: string;
   FIREBASE_CLIENT_EMAIL?: string;
   FIREBASE_PRIVATE_KEY?: string;
+  FIREBASE_PROJECT_NUMBER?: string;
+  FIREBASE_APP_ID?: string;
   CLOUDFLARE_REALTIME_APP_ID?: string;
   CLOUDFLARE_REALTIME_APP_SECRET?: string;
 }
@@ -39,7 +41,7 @@ function corsHeaders(request: Request, env: Env): HeadersInit {
   return {
     'Access-Control-Allow-Origin': allowed.includes(origin) ? origin : allowed[0] || '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Firebase-AppCheck',
     'Vary': 'Origin',
   };
 }
@@ -112,6 +114,62 @@ function decodeFirebaseUid(token: string): string | null {
   }
 }
 
+class RequestError extends Error {
+  constructor(message: string, readonly status: number, readonly retryAfter?: number) {
+    super(message);
+  }
+}
+
+async function verifyAppCheck(request: Request, env: Env): Promise<void> {
+  if (!env.FIREBASE_PROJECT_NUMBER || !env.FIREBASE_APP_ID) return;
+  const token = request.headers.get('X-Firebase-AppCheck') ?? '';
+  const [encodedHeader, encodedPayload, encodedSignature, extra] = token.split('.');
+  if (!encodedHeader || !encodedPayload || !encodedSignature || extra) throw new RequestError('App Check không hợp lệ.', 401);
+  try {
+    const header = JSON.parse(new TextDecoder().decode(decodeBase64Url(encodedHeader))) as { alg?: string; kid?: string; typ?: string };
+    const payload = JSON.parse(new TextDecoder().decode(decodeBase64Url(encodedPayload))) as {
+      iss?: string; aud?: string | string[]; sub?: string; exp?: number; iat?: number;
+    };
+    if (header.alg !== 'RS256' || header.typ !== 'JWT' || !header.kid) throw new Error('Invalid header');
+    const response = await fetch('https://firebaseappcheck.googleapis.com/v1/jwks', {
+      cf: { cacheTtl: 21600, cacheEverything: true },
+    });
+    if (!response.ok) throw new Error('Could not load App Check keys');
+    const keySet = await response.json() as { keys?: Array<JsonWebKey & { kid?: string }> };
+    const jwk = keySet.keys?.find((key) => key.kid === header.kid);
+    if (!jwk) throw new Error('Unknown signing key');
+    const key = await crypto.subtle.importKey('jwk', jwk, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']);
+    const valid = await crypto.subtle.verify(
+      'RSASSA-PKCS1-v1_5',
+      key,
+      decodeBase64Url(encodedSignature).buffer as ArrayBuffer,
+      new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`),
+    );
+    const audience = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
+    const now = Math.floor(Date.now() / 1000);
+    if (!valid
+      || payload.iss !== `https://firebaseappcheck.googleapis.com/${env.FIREBASE_PROJECT_NUMBER}`
+      || !audience.includes(`projects/${env.FIREBASE_PROJECT_NUMBER}`)
+      || payload.sub !== env.FIREBASE_APP_ID
+      || !payload.exp || payload.exp <= now
+      || !payload.iat || payload.iat > now + 60) throw new Error('Invalid claims');
+  } catch (error) {
+    if (error instanceof RequestError) throw error;
+    throw new RequestError('App Check không hợp lệ hoặc đã hết hạn.', 401);
+  }
+}
+
+async function rateLimit(request: Request, env: Env, scope: string, limit: number, windowSeconds: number): Promise<void> {
+  if (!env.SEARCH_QUOTA) return;
+  const address = request.headers.get('CF-Connecting-IP') ?? 'unknown';
+  const fingerprint = await sha256Prefix(`${address}:${request.headers.get('User-Agent') ?? ''}`, 20);
+  const windowId = Math.floor(Date.now() / (windowSeconds * 1000));
+  const key = `rate:${scope}:${windowId}:${fingerprint}`;
+  const used = Math.max(0, Number(await env.SEARCH_QUOTA.get(key)) || 0);
+  if (used >= limit) throw new RequestError('Bạn thao tác quá nhanh. Hãy thử lại sau ít phút.', 429, windowSeconds);
+  await env.SEARCH_QUOTA.put(key, String(used + 1), { expirationTtl: Math.max(60, windowSeconds * 2) });
+}
+
 interface VoiceCapability {
   uid: string;
   roomId: string;
@@ -164,7 +222,11 @@ async function authenticateRoomMember(
   if (!uid) throw new Error('VOICE_UNAUTHORIZED');
   const databaseUrl = env.FIREBASE_DATABASE_URL!.replace(/\/$/, '');
   const memberUrl = `${databaseUrl}/rooms/${encodeURIComponent(roomId)}/members/${encodeURIComponent(uid)}.json?auth=${encodeURIComponent(token)}`;
-  const response = await fetch(memberUrl, { headers: { Accept: 'application/json' } });
+  const appCheckToken = request.headers.get('X-Firebase-AppCheck') ?? '';
+  const response = await fetch(memberUrl, { headers: {
+    Accept: 'application/json',
+    ...(appCheckToken ? { 'X-Firebase-AppCheck': appCheckToken } : {}),
+  } });
   if (!response.ok) throw new Error('VOICE_UNAUTHORIZED');
   const member = await response.json() as { uid?: string; online?: boolean } | null;
   if (!member || member.uid !== uid || member.online === false) throw new Error('VOICE_UNAUTHORIZED');
@@ -447,6 +509,8 @@ async function recordSearch(env: Env): Promise<void> {
 async function search(request: Request, env: Env, url: URL) {
   const query = (url.searchParams.get('q') ?? '').trim().slice(0, 100);
   if (query.length < 2) return json(request, env, { error: 'Từ khóa phải có ít nhất 2 ký tự.' }, 400);
+  const quota = await readSearchQuota(env);
+  if (quota && quota.remaining <= 0) return json(request, env, { error: 'Đã hết 100 lượt tìm kiếm hôm nay. Dán link YouTube vẫn hoạt động bình thường.' }, 429);
   const items = await youtube('search', new URLSearchParams({
     part: 'snippet', type: 'video', maxResults: '10', safeSearch: 'moderate', q: query,
   }), env);
@@ -475,9 +539,9 @@ async function playlist(request: Request, env: Env, playlistId: string) {
   return json(request, env, result, 200, 3600);
 }
 
-async function sha256Prefix(value: string) {
+async function sha256Prefix(value: string, length = 4) {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
-  return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('').slice(0, 4);
+  return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('').slice(0, length);
 }
 
 async function sponsor(request: Request, env: Env, url: URL, videoId: string) {
@@ -503,6 +567,18 @@ export default {
   async fetch(request: Request, env: Env, context: ExecutionContext): Promise<Response> {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders(request, env) });
     const url = new URL(request.url);
+    try {
+      if (url.pathname !== '/api/health') await verifyAppCheck(request, env);
+      if (url.pathname === '/api/search') await rateLimit(request, env, 'search', 12, 60);
+      else if (url.pathname.startsWith('/api/voice/')) await rateLimit(request, env, 'voice', 120, 60);
+      else if (/^\/api\/(videos|playlists)\//.test(url.pathname)) await rateLimit(request, env, 'metadata', 60, 60);
+      else if (url.pathname.startsWith('/api/sponsor/')) await rateLimit(request, env, 'sponsor', 120, 60);
+    } catch (error) {
+      const issue = error instanceof RequestError ? error : new RequestError('Yêu cầu bị từ chối.', 400);
+      const response = json(request, env, { error: issue.message }, issue.status);
+      if (issue.retryAfter) response.headers.set('Retry-After', String(issue.retryAfter));
+      return response;
+    }
     if (url.pathname.startsWith('/api/voice/')) {
       if (request.method !== 'POST') return json(request, env, { error: 'Method not allowed' }, 405);
       try {
@@ -526,7 +602,11 @@ export default {
     }
     try {
       let response: Response | undefined;
-      if (url.pathname === '/api/health') response = json(request, env, { ok: true, voice: voiceConfigured(env) });
+      if (url.pathname === '/api/health') response = json(request, env, {
+        ok: true,
+        voice: voiceConfigured(env),
+        appCheck: Boolean(env.FIREBASE_PROJECT_NUMBER && env.FIREBASE_APP_ID),
+      });
       else if (url.pathname === '/api/quota') response = json(request, env, await readSearchQuota(env));
       else if (url.pathname === '/api/search') response = await search(request, env, url);
       const videoMatch = url.pathname.match(/^\/api\/videos\/([\w-]+)$/);

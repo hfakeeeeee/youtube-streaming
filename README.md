@@ -15,6 +15,9 @@ Phòng nghe YouTube cộng tác theo thời gian thực, kết hợp room/queue 
 - Danh sách phòng công khai trên trang chủ, đồng bộ qua một Firebase index riêng.
 - Ba chế độ loop, queue kéo thả, bình chọn, chống bài trùng bằng transaction, lịch sử 50 bài, tổng thời lượng và xóa toàn bộ queue.
 - Dashboard trạng thái Firebase/player/voice với tự phục hồi và thao tác retry thủ công.
+- Player phân loại lỗi YouTube, tự thử lại tối đa 2 lần và để một coordinator duy nhất tự bỏ qua video hỏng.
+- Activity log hiển thị 100 thay đổi gần nhất: thêm/xóa/chuyển bài, cài đặt, phân quyền và moderation.
+- Firebase App Check (reCAPTCHA Enterprise), Database Rules và Worker rate limit bảo vệ các endpoint dễ bị spam.
 - Room settings cho quyền thêm bài, chat, public/private và các nhóm SponsorBlock.
 - Phòng hết hạn sau 7 ngày Host không hoạt động và được dọn khi có request truy cập tiếp theo.
 - SponsorBlock là thiết lập chung của room để mọi thiết bị cùng bỏ qua một đoạn.
@@ -98,6 +101,7 @@ VITE_FIREBASE_AUTH_DOMAIN=giá_trị_authDomain
 VITE_FIREBASE_DATABASE_URL=https://ten-database.region.firebasedatabase.app
 VITE_FIREBASE_PROJECT_ID=giá_trị_projectId
 VITE_FIREBASE_APP_ID=giá_trị_appId
+VITE_FIREBASE_APPCHECK_SITE_KEY=site_key_recaptcha_enterprise
 VITE_API_BASE_URL=http://localhost:8787
 ```
 
@@ -212,7 +216,7 @@ Mở endpoint health sau khi deploy:
 https://syncbox-api.YOUR_SUBDOMAIN.workers.dev/api/health
 ```
 
-Kết quả `{"ok":true,"voice":true}` nghĩa là đủ ba secret. Nếu `voice` là `false`, các tính năng nghe nhạc vẫn chạy nhưng nút tham gia voice sẽ báo chưa cấu hình.
+Kết quả có `"voice":true` nghĩa là đủ ba secret voice. Trường `"appCheck":true` chỉ xuất hiện sau khi Worker có `FIREBASE_PROJECT_NUMBER` và `FIREBASE_APP_ID`. Nếu `voice` là `false`, các tính năng nghe nhạc vẫn chạy nhưng nút tham gia voice sẽ báo chưa cấu hình.
 
 Sau khi sửa `database.rules.json`, nhớ deploy Rules mới:
 
@@ -265,7 +269,7 @@ Trong GitHub repository:
 
 1. **Settings** > **Secrets and variables** > **Actions**.
 2. Chọn **New repository secret**.
-3. Tạo đúng 6 secret sau, dùng giá trị từ `.env.local`:
+3. Tạo đúng 7 secret sau, dùng giá trị từ `.env.local`:
 
 ```text
 VITE_FIREBASE_API_KEY
@@ -273,12 +277,38 @@ VITE_FIREBASE_AUTH_DOMAIN
 VITE_FIREBASE_DATABASE_URL
 VITE_FIREBASE_PROJECT_ID
 VITE_FIREBASE_APP_ID
+VITE_FIREBASE_APPCHECK_SITE_KEY
 VITE_API_BASE_URL
 ```
 
 `VITE_API_BASE_URL` phải là URL Worker đã deploy, không phải `localhost`.
 
-### 5.2. Bật GitHub Pages
+### 5.2. Bật Firebase App Check
+
+Syncbox dùng reCAPTCHA Enterprise dạng score-based nên người dùng không phải giải CAPTCHA. Hãy bật theo thứ tự dưới đây để không vô tình chặn website hoặc voice chat:
+
+1. Google Cloud Console > **Security** > **reCAPTCHA Enterprise** > tạo key loại **Website**, không bật checkbox challenge. Thêm domain GitHub Pages của bạn.
+2. Firebase Console > **App Check** > chọn Web app > đăng ký **reCAPTCHA Enterprise** bằng site key vừa tạo.
+3. Điền site key công khai vào `VITE_FIREBASE_APPCHECK_SITE_KEY` trong `.env.local` và GitHub Actions secret cùng tên, sau đó deploy frontend.
+4. Lấy **Project number** tại Firebase **Project settings > General**. Trong thư mục `worker`, thêm cấu hình bảo vệ custom API:
+
+```powershell
+npx wrangler secret put FIREBASE_PROJECT_NUMBER
+npx wrangler secret put FIREBASE_APP_ID
+npm run deploy
+```
+
+`FIREBASE_APP_ID` ở Worker dùng cùng giá trị với `VITE_FIREBASE_APP_ID`. Khi đủ hai giá trị này, Worker bắt buộc và xác minh chữ ký App Check cho mọi API trừ `/api/health`; nếu chưa cấu hình, Worker vẫn chạy ở chế độ tương thích để bạn rollout an toàn.
+
+5. Kiểm tra Firebase App Check metrics. Khi request hợp lệ đã xuất hiện ổn định, mới bấm **Enforce** cho **Realtime Database**.
+
+Để chạy local sau khi bật enforcement, đặt `VITE_FIREBASE_APPCHECK_DEBUG_TOKEN=true`, mở DevTools để lấy debug token rồi đăng ký token đó tại Firebase Console > App Check > menu Web app > **Manage debug tokens**. Không commit debug token và không thêm biến debug này vào GitHub Pages production.
+
+Tham khảo: [App Check với reCAPTCHA Enterprise](https://firebase.google.com/docs/app-check/web/recaptcha-enterprise-provider), [debug provider](https://firebase.google.com/docs/app-check/web/debug-provider), [xác minh custom backend](https://firebase.google.com/docs/app-check/custom-resource-backend).
+
+Rate limit hiện tại gồm 12 lượt search/phút, 60 request metadata/phút và 120 request voice/phút trên mỗi dấu vân tay mạng; Realtime Database giới hạn chat 1 tin/1,5 giây và listener thêm queue 1 lượt/1,5 giây. Giao diện giữ queue ở tối đa 100 bài. Đây là lớp giảm spam, không thay thế quota chính thức của YouTube/Firebase/Cloudflare.
+
+### 5.3. Bật GitHub Pages
 
 1. Repository **Settings** > **Pages**.
 2. Trong **Build and deployment**, tại **Source**, chọn **GitHub Actions**.
