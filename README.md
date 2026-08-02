@@ -11,6 +11,7 @@ Phòng nghe YouTube cộng tác theo thời gian thực, kết hợp room/queue 
 - Đồng bộ play, pause, seek và skip bằng thời gian Firebase server; âm lượng được lưu riêng trên từng thiết bị.
 - Chat, presence, chuyển Owner an toàn, Co-host/DJ tự tiếp quản khi Owner offline và quản lý vai trò trong phòng.
 - Voice chat dạng Discord qua Cloudflare Realtime SFU: mute, deafen, trạng thái đang nói, tự dọn presence khi rời phòng.
+- Browser notification opt-in cho chat mới, quyền DJ/Co-host và force-mute; hỗ trợ tab nền qua Service Worker.
 - Kick, ban, unban và rate limit cho chat/thêm bài; Owner và Co-host được bảo vệ theo cấp quyền.
 - Danh sách phòng công khai trên trang chủ, đồng bộ qua một Firebase index riêng.
 - Ba chế độ loop, queue kéo thả, bình chọn, chống bài trùng bằng transaction, lịch sử 50 bài, tổng thời lượng và xóa toàn bộ queue.

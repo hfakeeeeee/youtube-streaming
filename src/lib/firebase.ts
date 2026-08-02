@@ -193,13 +193,20 @@ export function leaveRoom(roomId: string, uid: string): Promise<void> {
 export async function setVoicePresence(roomId: string, presence: VoicePresence): Promise<void> {
   const { db } = requireFirebase();
   const presenceRef = ref(db, `rooms/${roomId}/voice/${presence.uid}`);
-  await set(presenceRef, presence);
+  const existing = await get(presenceRef);
+  const forcedMuted = existing.child('forcedMuted');
+  await set(presenceRef, { ...presence, ...(forcedMuted.exists() ? { forcedMuted: forcedMuted.val() === true } : {}) });
   await onDisconnect(presenceRef).remove();
 }
 
 export function updateVoiceMuted(roomId: string, uid: string, muted: boolean): Promise<void> {
   const { db } = requireFirebase();
   return update(ref(db, `rooms/${roomId}/voice/${uid}`), { muted });
+}
+
+export function updateVoiceForcedMuted(roomId: string, uid: string, forcedMuted: boolean): Promise<void> {
+  const { db } = requireFirebase();
+  return update(ref(db, `rooms/${roomId}/voice/${uid}`), { forcedMuted });
 }
 
 export function removeVoicePresence(roomId: string, uid: string): Promise<void> {

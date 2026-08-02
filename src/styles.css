@@ -149,8 +149,13 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 .room-identity > span { font: 600 14px 'Space Grotesk'; letter-spacing: -.2px; }
 .room-identity small { display: flex; align-items: center; justify-content: center; gap: 5px; color: #777589; font-size: 9px; letter-spacing: .3px; }
 .room-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
-.room-actions > button { height: 38px; display: flex; align-items: center; gap: 7px; padding: 0 14px; border: 1px solid var(--line); border-radius: 999px; background: rgba(255,255,255,.035); font-size: 11px; cursor: pointer; transition: .2s; }
+.room-actions > button { height: 38px; display: flex; align-items: center; gap: 7px; padding: 0 12px; border: 1px solid var(--line); border-radius: 999px; background: rgba(255,255,255,.035); font-size: 11px; line-height: 1; white-space: nowrap; cursor: pointer; transition: .2s; }
+.room-actions > button > span { white-space: nowrap; }
 .room-actions > button:hover { border-color: rgba(139,92,246,.4); background: rgba(139,92,246,.1); }
+.room-actions .notification-button { position: relative; }
+.room-actions .notification-button.active { color: #d8ceff; border-color: rgba(139,92,246,.35); background: rgba(139,92,246,.11); }
+.room-actions .notification-button.active::after { position: absolute; top: -4px; right: 10px; width: 9px; height: 9px; border: 2px solid #08080f; border-radius: 50%; content: ''; background: #4ade80; box-shadow: 0 0 8px rgba(74,222,128,.7); }
+.room-actions .notification-button.blocked { color: #9a6b76; }
 .online-pill { display: flex; align-items: center; gap: 7px; padding: 7px 10px; color: #918fa2; font-size: 10px; }
 .online-pill i, .member-online { width: 6px; height: 6px; border-radius: 50%; background: var(--success); box-shadow: 0 0 10px rgba(74,222,128,.7); }
 .connection-pill.degraded i { background: #fb7185; box-shadow: 0 0 10px rgba(251,113,133,.65); }
@@ -240,7 +245,7 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 
 /* Queue, chat and people */
 .side-panel { min-width: 0; border-left: 1px solid var(--line); background: rgba(12,12,20,.74); }
-.panel-tabs { height: 64px; display: grid; grid-template-columns: repeat(3,1fr) 38px; padding: 8px 7px 0 10px; border-bottom: 1px solid var(--line); }
+.panel-tabs { height: 64px; display: grid; grid-template-columns: repeat(3,1fr) 38px; padding: 0 7px 0 10px; border-bottom: 1px solid var(--line); }
 .panel-tabs button { position: relative; display: flex; align-items: center; justify-content: center; gap: 6px; border: 0; border-radius: 9px 9px 0 0; color: #777487; background: transparent; font-size: 10px; font-weight: 600; cursor: pointer; transition: .2s; }
 .panel-tabs button b { font: inherit; }
 .panel-tabs button:hover { color: #bbb8c8; background: rgba(255,255,255,.025); }
@@ -444,6 +449,10 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 .member-admin { display: flex; align-items: center; gap: 5px; }
 .member-admin > button { width: 29px; height: 29px; display: grid; place-items: center; border: 1px solid rgba(139,92,246,.18); border-radius: 7px; color: #ac96f4; background: rgba(139,92,246,.07); cursor: pointer; }
 .member-admin > button:hover { color: #fff; background: rgba(139,92,246,.18); }
+.member-admin > .voice-force-mute.active, .voice-force-mute.active { color: #fb91a2; border-color: rgba(251,113,133,.28); background: rgba(251,113,133,.09); }
+.member-inline-actions { display: flex; align-items: center; gap: 4px; }
+.member-inline-actions > button { width: 31px; height: 31px; display: grid; place-items: center; padding: 0; border-radius: 8px; cursor: pointer; }
+.member-inline-actions > .voice-force-mute { border: 1px solid rgba(139,92,246,.18); color: #9a91ac; background: rgba(255,255,255,.025); }
 .member-admin > .moderation-button:hover { color: #f4cf75; border-color: rgba(251,191,36,.22); background: rgba(251,191,36,.07); }
 .member-admin > .moderation-button.ban:hover { color: #fb91a2; border-color: rgba(251,113,133,.22); background: rgba(251,113,133,.07); }
 .member-admin > .role-toggle { position: relative; width: 31px; height: 31px; display: grid; place-items: center; padding: 0; border: 1px solid rgba(139,92,246,.18); border-radius: 8px; color: #8f8b9d; background: rgba(255,255,255,.025); cursor: pointer; transition: color .18s, border-color .18s, background .18s, box-shadow .18s; }
@@ -553,7 +562,7 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 /* Readable type scale */
 .room-identity > span { font-size: 16px; }
 .room-identity small { font-size: 11px; }
-.room-actions > button { font-size: 13px; }
+.room-header .room-actions > button { font-size: 11px; }
 .online-pill { font-size: 12px; }
 .search-panel-heading span { font-size: 10px; }
 .search-panel-heading strong { font-size: 20px; }

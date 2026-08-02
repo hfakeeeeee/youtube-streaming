@@ -40,6 +40,7 @@ export interface VoicePresence {
   trackName: string;
   joinedAt: number;
   muted: boolean;
+  forcedMuted?: boolean;
 }
 
 export interface BanRecord {

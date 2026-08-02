@@ -4,6 +4,8 @@ import {
   ArrowDown,
   ArrowUp,
   Ban,
+  Bell,
+  BellOff,
   ChevronRight,
   GripVertical,
   Globe2,
@@ -88,6 +90,7 @@ import {
   updateDisplayName,
   updateRoomMeta,
   updateVoiceMuted,
+  updateVoiceForcedMuted,
   writePlayback,
 } from './lib/firebase';
 import { VoiceClient, type VoiceConnectionState } from './lib/voice';
@@ -122,6 +125,7 @@ interface RecentRoom {
 }
 
 const RECENT_ROOMS_KEY = 'syncbox:recent-rooms';
+const NOTIFICATIONS_KEY = 'syncbox:browser-notifications';
 
 function loadRecentRooms(): RecentRoom[] {
   try {
@@ -410,6 +414,8 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [localVolume, setLocalVolume] = useState(() => Number(localStorage.getItem('syncbox:volume') ?? 80));
   const [controlBusy, setControlBusy] = useState(false);
   const [connected, setConnected] = useState<boolean | null>(null);
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(() => typeof Notification === 'undefined' ? 'denied' : Notification.permission);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(() => typeof Notification !== 'undefined' && Notification.permission === 'granted' && localStorage.getItem(NOTIFICATIONS_KEY) === '1');
   const [serverOffset, setServerOffset] = useState(0);
   const [notice, setNotice] = useState<{ message: string; tone: 'success' | 'error' } | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -447,6 +453,9 @@ function RoomPage({ roomId }: { roomId: string }) {
   const lastChatMessageId = useRef<string | null>(null);
   const lastObservedChatMessageId = useRef<string | null>(null);
   const chatMessagesInitialized = useRef(false);
+  const ownPrivileges = useRef<{ role: Role; coHost: boolean } | null>(null);
+  const ownForcedMute = useRef<boolean | null>(null);
+  const browserNotificationRef = useRef<(title: string, body: string, tag: string, action?: 'chat') => void>(() => undefined);
   const mediaActionsRef = useRef<{ play: () => Promise<void>; pause: () => Promise<void>; next: () => Promise<void> }>({
     play: async () => undefined,
     pause: async () => undefined,
@@ -473,6 +482,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   const queueDuration = useMemo(() => queue.reduce((total, item) => total + (item.duration ?? 0), 0), [queue]);
   const onlineMemberCount = useMemo(() => members.filter((member) => member.online).length, [members]);
   const voiceByUid = useMemo(() => new Map(voicePresences.map((presence) => [presence.uid, presence])), [voicePresences]);
+  const forcedVoiceMuted = Boolean(voiceByUid.get(uid)?.forcedMuted);
   const voiceJoined = voiceByUid.has(uid) && (voiceState === 'connected' || voiceState === 'reconnecting' || voiceState === 'error');
   const playerConnectionState = !playback.video
     ? 'idle'
@@ -493,6 +503,54 @@ function RoomPage({ roomId }: { roomId: string }) {
     ];
     return groups.filter((group) => group.members.length > 0);
   }, [members, meta?.coHosts, meta?.hostUid]);
+
+  browserNotificationRef.current = (title, body, tag, action) => {
+    if (!notificationsEnabled || typeof Notification === 'undefined' || Notification.permission !== 'granted' || document.visibilityState === 'visible') return;
+    const options: NotificationOptions = {
+      body,
+      icon: `${import.meta.env.BASE_URL}app-icon-512.png`,
+      tag,
+      data: { action, url: window.location.href },
+    };
+    void (async () => {
+      try {
+        if ('serviceWorker' in navigator) {
+          const registration = await navigator.serviceWorker.getRegistration(import.meta.env.BASE_URL)
+            ?? await navigator.serviceWorker.register(`${import.meta.env.BASE_URL}notification-sw.js`, { scope: import.meta.env.BASE_URL });
+          await registration.showNotification(title, options);
+          return;
+        }
+        const notification = new Notification(title, options);
+        notification.onclick = () => {
+          window.focus();
+          notification.close();
+          if (action === 'chat') {
+            shouldAutoScrollChat.current = true;
+            setUnreadChatCount(0);
+            setActivePanel('chat');
+            setSidePanelCollapsed(false);
+            localStorage.setItem('syncbox:side-panel-collapsed', '0');
+          }
+        };
+      } catch {
+        // Permission can be revoked while the room is open.
+      }
+    })();
+  };
+
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return;
+    const handleNotificationClick = (event: MessageEvent<{ type?: string; action?: string }>) => {
+      if (event.data?.type !== 'syncbox-notification-click' || event.data.action !== 'chat') return;
+      shouldAutoScrollChat.current = true;
+      setUnreadChatCount(0);
+      setActivePanel('chat');
+      setSidePanelCollapsed(false);
+      localStorage.setItem('syncbox:side-panel-collapsed', '0');
+    };
+    navigator.serviceWorker.addEventListener('message', handleNotificationClick);
+    return () => navigator.serviceWorker.removeEventListener('message', handleNotificationClick);
+  }, []);
 
   useEffect(() => {
     const latestMessage = messages[messages.length - 1];
@@ -531,13 +589,52 @@ function RoomPage({ roomId }: { roomId: string }) {
     const incomingCount = newMessages.filter((message) => message.uid !== uid).length;
     if (incomingCount === 0) return;
 
+    const latestIncoming = [...newMessages].reverse().find((message) => message.uid !== uid);
+    if (latestIncoming) browserNotificationRef.current(
+      `${latestIncoming.name} · ${meta?.name ?? 'Syncbox'}`,
+      latestIncoming.text,
+      `syncbox-chat-${roomId}`,
+      'chat',
+    );
+
     const chatIsBeingRead = activePanel === 'chat'
       && !sidePanelCollapsed
       && document.visibilityState === 'visible'
       && shouldAutoScrollChat.current;
     if (chatIsBeingRead) setUnreadChatCount(0);
     else setUnreadChatCount((count) => count + incomingCount);
-  }, [activePanel, messages, sidePanelCollapsed, uid]);
+  }, [activePanel, messages, meta?.name, roomId, sidePanelCollapsed, uid]);
+
+  useEffect(() => {
+    if (!uid || !me || !meta) return;
+    const current = { role: me.role, coHost: Boolean(meta.coHosts?.[uid]) };
+    const previous = ownPrivileges.current;
+    ownPrivileges.current = current;
+    if (!previous) return;
+    if (!previous.coHost && current.coHost) {
+      showNotice('Bạn vừa được cấp quyền Co-host.');
+      browserNotificationRef.current('Bạn đã trở thành Co-host', `Bạn có thể cùng quản lý phòng ${meta.name}.`, `syncbox-role-${roomId}`);
+    } else if (previous.role !== 'dj' && current.role === 'dj' && !current.coHost) {
+      showNotice('Bạn vừa được cấp quyền DJ.');
+      browserNotificationRef.current('Bạn đã trở thành DJ', `Bạn có thể điều khiển nhạc trong phòng ${meta.name}.`, `syncbox-role-${roomId}`);
+    }
+  }, [me, meta, roomId, uid]);
+
+  useEffect(() => {
+    if (!voiceJoined) {
+      ownForcedMute.current = null;
+      return;
+    }
+    const previous = ownForcedMute.current;
+    ownForcedMute.current = forcedVoiceMuted;
+    if (forcedVoiceMuted) {
+      voiceClientRef.current?.setMuted(true);
+      setVoiceMuted(true);
+    }
+    if (previous !== false || !forcedVoiceMuted) return;
+    showNotice('Microphone của bạn đã bị Host tắt.', 'error');
+    browserNotificationRef.current('Bạn đã bị mute khỏi Voice Lounge', `${meta?.name ?? 'Phòng Syncbox'} đã tắt microphone của bạn.`, `syncbox-voice-mute-${roomId}`);
+  }, [forcedVoiceMuted, meta?.name, roomId, voiceJoined]);
 
   function handleChatScroll() {
     const container = messagesRef.current;
@@ -557,6 +654,36 @@ function RoomPage({ roomId }: { roomId: string }) {
   function showNotice(message: string, tone: 'success' | 'error' = 'success') {
     setNotice({ message, tone });
     window.setTimeout(() => setNotice(null), 2600);
+  }
+
+  async function toggleBrowserNotifications() {
+    if (typeof Notification === 'undefined') {
+      showNotice('Trình duyệt này không hỗ trợ thông báo.', 'error');
+      return;
+    }
+    if (notificationsEnabled) {
+      localStorage.removeItem(NOTIFICATIONS_KEY);
+      setNotificationsEnabled(false);
+      showNotice('Đã tắt thông báo trình duyệt.');
+      return;
+    }
+    if (Notification.permission === 'denied') {
+      setNotificationPermission('denied');
+      showNotice('Thông báo đang bị chặn. Hãy cho phép trong cài đặt của trình duyệt.', 'error');
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    setNotificationPermission(permission);
+    if (permission !== 'granted') {
+      showNotice('Syncbox chỉ bật thông báo khi bạn đồng ý.', 'error');
+      return;
+    }
+    localStorage.setItem(NOTIFICATIONS_KEY, '1');
+    if ('serviceWorker' in navigator) {
+      await navigator.serviceWorker.register(`${import.meta.env.BASE_URL}notification-sw.js`, { scope: import.meta.env.BASE_URL }).catch(() => undefined);
+    }
+    setNotificationsEnabled(true);
+    showNotice('Đã bật thông báo cho chat, quyền và voice.');
   }
 
   function toggleSidePanel() {
@@ -628,6 +755,8 @@ function RoomPage({ roomId }: { roomId: string }) {
     let joinedUid = '';
     const unsubscribes: Array<() => void> = [];
     chatMessagesInitialized.current = false;
+    ownPrivileges.current = null;
+    ownForcedMute.current = null;
     lastObservedChatMessageId.current = null;
     lastChatMessageId.current = null;
     setUnreadChatCount(0);
@@ -1402,6 +1531,10 @@ function RoomPage({ roomId }: { roomId: string }) {
   joinVoiceRef.current = joinVoice;
 
   function toggleVoiceMute() {
+    if (forcedVoiceMuted) {
+      showNotice('Host đang tắt microphone của bạn.', 'error');
+      return;
+    }
     const next = !voiceMuted;
     voiceClientRef.current?.setMuted(next);
     setVoiceMuted(next);
@@ -1422,6 +1555,19 @@ function RoomPage({ roomId }: { roomId: string }) {
     if (member.uid === uid || member.uid === meta?.hostUid) return false;
     if (isOwner) return true;
     return isCoHost && !meta?.coHosts?.[member.uid];
+  }
+
+  async function toggleMemberVoiceMute(member: Member) {
+    const presence = voiceByUid.get(member.uid);
+    if (!presence || !canModerate(member)) return;
+    const forcedMuted = !presence.forcedMuted;
+    try {
+      await updateVoiceForcedMuted(roomId, member.uid, forcedMuted);
+      logActivity('moderation', `${forcedMuted ? 'tắt' : 'cho phép bật lại'} microphone của ${member.name}`);
+      showNotice(forcedMuted ? `Đã mute ${member.name} khỏi voice.` : `${member.name} có thể bật microphone trở lại.`);
+    } catch (cause) {
+      showNotice(cause instanceof Error ? cause.message : 'Không thể cập nhật microphone.', 'error');
+    }
   }
 
   async function handleKick(member: Member) {
@@ -1534,6 +1680,7 @@ function RoomPage({ roomId }: { roomId: string }) {
         <div className="room-actions">
           <button type="button" className={`online-pill connection-pill ${connectionNeedsAttention ? 'degraded' : connected === null ? 'connecting' : ''}`} title="Xem trạng thái kết nối" onClick={() => setConnectionOpen(true)}><i /> {onlineMemberCount} đang nghe</button>
           <button onClick={() => setHelpOpen(true)}><CircleHelp size={17} /> Hướng dẫn</button>
+          <button className={`notification-button ${notificationsEnabled ? 'active' : ''} ${notificationPermission === 'denied' ? 'blocked' : ''}`} title={notificationsEnabled ? 'Tắt thông báo trình duyệt' : notificationPermission === 'denied' ? 'Thông báo đang bị trình duyệt chặn' : 'Bật thông báo trình duyệt'} aria-pressed={notificationsEnabled} onClick={() => void toggleBrowserNotifications()}>{notificationsEnabled ? <Bell size={17} /> : <BellOff size={17} />} <span>{notificationsEnabled ? 'Thông báo bật' : 'Thông báo'}</span></button>
           <button onClick={() => void copyInvite()}><Share2 size={17} /> {copied ? 'Đã sao chép' : 'Mời bạn bè'}</button>
           {isHost && <button onClick={openSettings}><Settings2 size={17} /> Cài đặt</button>}
           <button className="avatar-button" title={`${me?.name ?? 'Tài khoản'} · Đổi tên`} aria-label="Mở hồ sơ và đổi tên" onClick={openProfile}>{me?.name?.slice(0, 1).toUpperCase()}</button>
@@ -1805,9 +1952,9 @@ function RoomPage({ roomId }: { roomId: string }) {
             </div>
             {voiceJoined && (
               <div className="voice-controls">
-                <button className={voiceMuted ? 'active' : ''} onClick={toggleVoiceMute} disabled={voiceDeafened}>
+                <button className={voiceMuted ? 'active' : ''} onClick={toggleVoiceMute} disabled={voiceDeafened || forcedVoiceMuted} title={forcedVoiceMuted ? 'Host đang tắt microphone của bạn' : undefined}>
                   {voiceMuted ? <MicOff /> : <Mic />}
-                  <span>{voiceMuted ? 'Bật mic' : 'Tắt mic'}</span>
+                  <span>{forcedVoiceMuted ? 'Bị mute' : voiceMuted ? 'Bật mic' : 'Tắt mic'}</span>
                 </button>
                 <button className={voiceDeafened ? 'active' : ''} onClick={toggleVoiceDeafen}>
                   {voiceDeafened ? <VolumeX /> : <Headphones />}
@@ -1847,11 +1994,12 @@ function RoomPage({ roomId }: { roomId: string }) {
                       <span>{voiceByUid.has(member.uid) ? <>{voiceByUid.get(member.uid)?.muted ? <MicOff size={10} /> : <Mic size={10} />} Trong voice</> : member.uid === meta.hostUid ? 'Owner phòng' : meta.coHosts?.[member.uid] ? 'Co-host' : member.role === 'dj' ? 'DJ' : 'Đang nghe'}</span>
                     </div>
                     {member.uid === meta.hostUid ? <Crown className="host-crown" size={17} /> : meta.coHosts?.[member.uid] ? (
-                      isOwner ? <button className="cohost-button active" title="Thu hồi quyền Co-host" onClick={() => void setCoHost(member, false)}><ShieldCheck size={15} /></button> : <ShieldCheck className="cohost-mark" size={17} />
+                      isOwner ? <span className="member-inline-actions"><button className="cohost-button active" title="Thu hồi quyền Co-host" onClick={() => void setCoHost(member, false)}><ShieldCheck size={15} /></button>{voiceByUid.has(member.uid) && <button className={`voice-force-mute ${voiceByUid.get(member.uid)?.forcedMuted ? 'active' : ''}`} title={voiceByUid.get(member.uid)?.forcedMuted ? 'Cho phép bật mic' : 'Mute khỏi voice'} onClick={() => void toggleMemberVoiceMute(member)}><MicOff size={14} /></button>}</span> : <ShieldCheck className="cohost-mark" size={17} />
                     ) : isHost ? (
                       <div className="member-admin">
                         {isOwner && <button title="Thêm Co-host" onClick={() => void setCoHost(member, true)}><ShieldCheck size={14} /></button>}
                         {isOwner && <button title={member.online ? 'Chuyển quyền Owner' : 'Thành viên phải online để nhận Owner'} disabled={!member.online} onClick={() => void handOffHost(member)}><Crown size={14} /></button>}
+                        {canModerate(member) && voiceByUid.has(member.uid) && <button className={`voice-force-mute ${voiceByUid.get(member.uid)?.forcedMuted ? 'active' : ''}`} title={voiceByUid.get(member.uid)?.forcedMuted ? 'Cho phép bật mic' : 'Mute khỏi voice'} onClick={() => void toggleMemberVoiceMute(member)}><MicOff size={14} /></button>}
                         <RolePicker value={member.role === 'dj' ? 'dj' : 'listener'} onChange={(role) => void updateMemberRole(roomId, member.uid, role as Role).then(() => { logActivity('role_change', `${role === 'dj' ? 'cấp quyền DJ cho' : 'chuyển về Listener'} ${member.name}`); showNotice(`Đã cập nhật quyền của ${member.name}.`); }).catch((cause) => showNotice(cause instanceof Error ? cause.message : 'Không thể cập nhật quyền.', 'error'))} />
                         {canModerate(member) && <button className="moderation-button" title="Đưa khỏi phòng" onClick={() => void handleKick(member)}><UserMinus size={14} /></button>}
                         {canModerate(member) && <button className="moderation-button ban" title="Cấm khỏi phòng" onClick={() => void handleBan(member)}><Ban size={14} /></button>}
@@ -1919,12 +2067,13 @@ function RoomPage({ roomId }: { roomId: string }) {
               <article><i><History /></i><div><strong>Lịch sử phát</strong><span>Mở Lịch sử trong Queue để xem tối đa 50 bài gần nhất và thêm lại; bài trùng được tự động bỏ qua.</span></div></article>
               <article><i><ThumbsUp /></i><div><strong>Bình chọn</strong><span>Mỗi người có một vote để thể hiện bài muốn nghe tiếp.</span></div></article>
               <article><i><MessageCircle /></i><div><strong>Chat</strong><span>Badge hiển thị tin chưa đọc và tự xóa khi bạn mở chat hoặc cuộn xuống cuối.</span></div></article>
+              <article><i><Bell /></i><div><strong>Thông báo</strong><span>Bật bằng nút chuông trên header để nhận chat mới, thay đổi quyền và voice mute khi tab chạy nền.</span></div></article>
               <article><i><AudioWaveform /></i><div><strong>Media Session</strong><span>Hiển thị bài trên màn hình khóa; Play, Pause và Next phụ thuộc việc trình duyệt có chuyển action từ YouTube iframe cho Syncbox hay không.</span></div></article>
               <article><i><WifiOff /></i><div><strong>Trạng thái kết nối</strong><span>Bấm vào số người đang nghe trên header để kiểm tra Firebase, player, voice và chạy phục hồi thủ công.</span></div></article>
               <article><i><Crown /></i><div><strong>Chuyển Owner</strong><span>Owner bấm biểu tượng vương miện cạnh một thành viên online; Owner cũ sẽ trở thành Co-host.</span></div></article>
               <article><i><Sparkles /></i><div><strong>SponsorBlock</strong><span>Tự bỏ qua sponsor và các phân đoạn cộng đồng đã đánh dấu.</span></div></article>
               <article><i><Mic /></i><div><strong>Voice Lounge</strong><span>Bấm Tham gia trong danh sách thành viên và cho phép trình duyệt dùng microphone.</span></div></article>
-              <article><i><VolumeX /></i><div><strong>Mute / Deafen</strong><span>Mute tắt microphone; Deafen tắt âm thanh của mọi người và đồng thời tắt mic của bạn.</span></div></article>
+              <article><i><VolumeX /></i><div><strong>Mute / Deafen</strong><span>Mute tắt microphone; Deafen tắt âm thanh của mọi người. Owner/Co-host có thể force-mute thành viên trong voice.</span></div></article>
             </div></div>
 
             <div className="help-section"><h3>Quyền trong phòng</h3><div className="role-guide">
