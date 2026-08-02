@@ -704,12 +704,15 @@ button:disabled { opacity: .42; cursor: not-allowed; }
   .roster-group { min-width: 245px; }
   .roster-group + .roster-group { margin-top: 0; }
   .panel-body { height: 500px; }
-  .room-header { grid-template-columns: auto 1fr; }
-  .room-identity { margin-left: 20px; text-align: left; }
+  .room-header { grid-template-columns: auto minmax(0,1fr) auto; gap: 12px; }
+  .room-identity { min-width: 0; grid-column: 2; grid-row: 1; margin-left: 8px; text-align: left; }
+  .room-identity > span, .room-identity small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .room-identity small { justify-content: flex-start; }
-  .room-actions { grid-column: 2; grid-row: 1; }
+  .room-actions { grid-column: 3; grid-row: 1; gap: 5px; }
   .online-pill { display: none; }
   .room-actions > .connection-pill { width: 38px; display: flex; justify-content: center; padding: 0; font-size: 0; }
+  .room-actions > button:not(.avatar-button) { width: 38px; flex: none; justify-content: center; padding: 0; font-size: 0; }
+  .room-actions > button:not(.avatar-button) > span { display: none; }
   .public-grid { grid-template-columns: repeat(2,1fr); }
 }
 
@@ -736,10 +739,14 @@ button:disabled { opacity: .42; cursor: not-allowed; }
   .room-footer .creator-links { margin-left: auto; }
   .room-footer .creator-links a span { display: none; }
   .room-footer .creator-links a { width: 32px; padding: 0; justify-content: center; }
-  .room-header { height: 64px; padding: 0 13px; }
+  .room-header { height: 64px; grid-template-columns: 34px minmax(0,1fr) auto; gap: 8px; padding: 0 10px; }
   .room-header .brand > span:last-child { display: none; }
   .room-header .brand-mark { width: 34px; height: 34px; }
-  .room-identity { margin-left: 10px; }
+  .room-identity { margin-left: 0; }
+  .room-identity > span { font-size: 13px; }
+  .room-identity small { font-size: 8px; }
+  .room-actions { gap: 4px; }
+  .room-actions > .connection-pill, .room-actions > .help-button { display: none; }
   .room-actions > button:not(.avatar-button) { width: 37px; padding: 0; justify-content: center; font-size: 0; }
   .room-actions .avatar-button { display: none; }
   .room-shell { min-height: calc(100vh - 64px); }

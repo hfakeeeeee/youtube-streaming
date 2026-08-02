@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Gauge, Link2, LoaderCircle, Plus, Search, X } from 'lucide-react';
 import { getPlaylist, getSearchQuota, getVideo, searchVideos, type SearchQuota } from '../lib/api';
 import { isProbablyUrl, isYouTubeMixPlaylist, parseYouTubeInput } from '../lib/youtube';
@@ -10,6 +10,7 @@ interface Props {
 }
 
 export function SearchPanel({ canAdd, onAdd }: Props) {
+  const panelRef = useRef<HTMLElement>(null);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<VideoItem[]>([]);
   const [busy, setBusy] = useState(false);
@@ -19,6 +20,27 @@ export function SearchPanel({ canAdd, onAdd }: Props) {
   useEffect(() => {
     void getSearchQuota().then(setQuota);
   }, []);
+
+  useEffect(() => {
+    if (results.length === 0) return;
+
+    function closeWhenOutside(event: PointerEvent) {
+      if (event.target instanceof Node && !panelRef.current?.contains(event.target)) {
+        setResults([]);
+      }
+    }
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') setResults([]);
+    }
+
+    document.addEventListener('pointerdown', closeWhenOutside);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeWhenOutside);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [results.length]);
 
   async function submit() {
     const value = query.trim();
@@ -75,7 +97,7 @@ export function SearchPanel({ canAdd, onAdd }: Props) {
   }
 
   return (
-    <section className="search-panel">
+    <section className="search-panel" ref={panelRef}>
       <div className="search-panel-heading">
         <div>
           <span>THÊM VÀO PHÒNG</span>

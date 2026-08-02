@@ -1679,9 +1679,9 @@ function RoomPage({ roomId }: { roomId: string }) {
         <div className="room-identity"><span>{meta.name}</span><small>{meta.isPublic ? <Globe2 size={12} /> : <LockKeyhole size={12} />} {meta.isPublic ? 'Phòng công khai' : 'Phòng riêng tư'} · {roomId}</small></div>
         <div className="room-actions">
           <button type="button" className={`online-pill connection-pill ${connectionNeedsAttention ? 'degraded' : connected === null ? 'connecting' : ''}`} title="Xem trạng thái kết nối" onClick={() => setConnectionOpen(true)}><i /> {onlineMemberCount} đang nghe</button>
-          <button onClick={() => setHelpOpen(true)}><CircleHelp size={17} /> Hướng dẫn</button>
+          <button className="help-button" onClick={() => setHelpOpen(true)}><CircleHelp size={17} /> Hướng dẫn</button>
           <button className={`notification-button ${notificationsEnabled ? 'active' : ''} ${notificationPermission === 'denied' ? 'blocked' : ''}`} title={notificationsEnabled ? 'Tắt thông báo trình duyệt' : notificationPermission === 'denied' ? 'Thông báo đang bị trình duyệt chặn' : 'Bật thông báo trình duyệt'} aria-pressed={notificationsEnabled} onClick={() => void toggleBrowserNotifications()}>{notificationsEnabled ? <Bell size={17} /> : <BellOff size={17} />} <span>{notificationsEnabled ? 'Thông báo bật' : 'Thông báo'}</span></button>
-          <button onClick={() => void copyInvite()}><Share2 size={17} /> {copied ? 'Đã sao chép' : 'Mời bạn bè'}</button>
+          <button className="invite-button" onClick={() => void copyInvite()}><Share2 size={17} /> {copied ? 'Đã sao chép' : 'Mời bạn bè'}</button>
           {isHost && <button onClick={openSettings}><Settings2 size={17} /> Cài đặt</button>}
           <button className="avatar-button" title={`${me?.name ?? 'Tài khoản'} · Đổi tên`} aria-label="Mở hồ sơ và đổi tên" onClick={openProfile}>{me?.name?.slice(0, 1).toUpperCase()}</button>
         </div>
