@@ -1313,8 +1313,14 @@ function RoomPage({ roomId }: { roomId: string }) {
       }
     };
 
-    setHandler('play', canControlPlayback ? () => { void mediaActionsRef.current.play(); } : null);
-    setHandler('pause', canControlPlayback ? () => { void mediaActionsRef.current.pause(); } : null);
+    setHandler('play', canControlPlayback ? () => {
+      mediaSession.playbackState = 'playing';
+      void mediaActionsRef.current.play();
+    } : null);
+    setHandler('pause', canControlPlayback ? () => {
+      mediaSession.playbackState = 'paused';
+      void mediaActionsRef.current.pause();
+    } : null);
     setHandler('nexttrack', canControlPlayback ? () => { void mediaActionsRef.current.next(); } : null);
 
     return () => {
@@ -1644,7 +1650,7 @@ function RoomPage({ roomId }: { roomId: string }) {
               <article><i><GripVertical /></i><div><strong>Sắp xếp queue</strong><span>Kéo bài lên hoặc xuống; đường sáng cho biết vị trí sẽ thả.</span></div></article>
               <article><i><ThumbsUp /></i><div><strong>Bình chọn</strong><span>Mỗi người có một vote để thể hiện bài muốn nghe tiếp.</span></div></article>
               <article><i><MessageCircle /></i><div><strong>Chat</strong><span>Badge hiển thị tin chưa đọc và tự xóa khi bạn mở chat hoặc cuộn xuống cuối.</span></div></article>
-              <article><i><AudioWaveform /></i><div><strong>Điều khiển hệ thống</strong><span>Bài đang phát hiện trên màn hình khóa và phím media; Owner, Co-host và DJ có thể Play, Pause, Next.</span></div></article>
+              <article><i><AudioWaveform /></i><div><strong>Media Session</strong><span>Hiển thị bài trên màn hình khóa; Play, Pause và Next phụ thuộc việc trình duyệt có chuyển action từ YouTube iframe cho Syncbox hay không.</span></div></article>
               <article><i><Sparkles /></i><div><strong>SponsorBlock</strong><span>Tự bỏ qua sponsor và các phân đoạn cộng đồng đã đánh dấu.</span></div></article>
               <article><i><Mic /></i><div><strong>Voice Lounge</strong><span>Bấm Tham gia trong danh sách thành viên và cho phép trình duyệt dùng microphone.</span></div></article>
               <article><i><VolumeX /></i><div><strong>Mute / Deafen</strong><span>Mute tắt microphone; Deafen tắt âm thanh của mọi người và đồng thời tắt mic của bạn.</span></div></article>
