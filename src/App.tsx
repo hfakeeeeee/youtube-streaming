@@ -364,6 +364,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [voiceDeafened, setVoiceDeafened] = useState(false);
   const [speakingUids, setSpeakingUids] = useState<Set<string>>(() => new Set());
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
   const [bans, setBans] = useState<BanRecord[]>([]);
   const [segments, setSegments] = useState<SponsorSegment[]>([]);
   const [activePanel, setActivePanel] = useState<'queue' | 'chat'>('queue');
@@ -406,6 +407,13 @@ function RoomPage({ roomId }: { roomId: string }) {
   const messagesRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollChat = useRef(true);
   const lastChatMessageId = useRef<string | null>(null);
+  const lastObservedChatMessageId = useRef<string | null>(null);
+  const chatMessagesInitialized = useRef(false);
+  const mediaActionsRef = useRef<{ play: () => Promise<void>; pause: () => Promise<void>; next: () => Promise<void> }>({
+    play: async () => undefined,
+    pause: async () => undefined,
+    next: async () => undefined,
+  });
 
   const me = useMemo(() => members.find((member) => member.uid === uid), [members, uid]);
   const isOwner = Boolean(uid && meta?.hostUid === uid);
@@ -445,10 +453,48 @@ function RoomPage({ roomId }: { roomId: string }) {
     return () => window.cancelAnimationFrame(frame);
   }, [activePanel, messages, sidePanelCollapsed, uid]);
 
+  useEffect(() => {
+    const markVisibleChatRead = () => {
+      if (document.visibilityState === 'visible' && activePanel === 'chat' && !sidePanelCollapsed && shouldAutoScrollChat.current) {
+        setUnreadChatCount(0);
+      }
+    };
+    document.addEventListener('visibilitychange', markVisibleChatRead);
+    return () => document.removeEventListener('visibilitychange', markVisibleChatRead);
+  }, [activePanel, sidePanelCollapsed]);
+
+  useEffect(() => {
+    const latestMessage = messages[messages.length - 1];
+    if (!chatMessagesInitialized.current) return;
+    if (!latestMessage || latestMessage.id === lastObservedChatMessageId.current) return;
+
+    const previousIndex = messages.findIndex((message) => message.id === lastObservedChatMessageId.current);
+    const newMessages = previousIndex >= 0 ? messages.slice(previousIndex + 1) : [latestMessage];
+    lastObservedChatMessageId.current = latestMessage.id;
+    const incomingCount = newMessages.filter((message) => message.uid !== uid).length;
+    if (incomingCount === 0) return;
+
+    const chatIsBeingRead = activePanel === 'chat'
+      && !sidePanelCollapsed
+      && document.visibilityState === 'visible'
+      && shouldAutoScrollChat.current;
+    if (chatIsBeingRead) setUnreadChatCount(0);
+    else setUnreadChatCount((count) => count + incomingCount);
+  }, [activePanel, messages, sidePanelCollapsed, uid]);
+
   function handleChatScroll() {
     const container = messagesRef.current;
     if (!container) return;
     shouldAutoScrollChat.current = container.scrollHeight - container.scrollTop - container.clientHeight < 72;
+    if (shouldAutoScrollChat.current && activePanel === 'chat' && !sidePanelCollapsed) setUnreadChatCount(0);
+  }
+
+  function scrollChatToLatest() {
+    const container = messagesRef.current;
+    if (!container) return;
+    shouldAutoScrollChat.current = true;
+    setUnreadChatCount(0);
+    container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
   }
 
   function showNotice(message: string, tone: 'success' | 'error' = 'success') {
@@ -457,11 +503,13 @@ function RoomPage({ roomId }: { roomId: string }) {
   }
 
   function toggleSidePanel() {
-    setSidePanelCollapsed((collapsed) => {
-      const next = !collapsed;
-      localStorage.setItem('syncbox:side-panel-collapsed', next ? '1' : '0');
-      return next;
-    });
+    const next = !sidePanelCollapsed;
+    setSidePanelCollapsed(next);
+    localStorage.setItem('syncbox:side-panel-collapsed', next ? '1' : '0');
+    if (!next && activePanel === 'chat') {
+      shouldAutoScrollChat.current = true;
+      setUnreadChatCount(0);
+    }
   }
 
   function toggleRoster() {
@@ -474,6 +522,10 @@ function RoomPage({ roomId }: { roomId: string }) {
 
   function openSidePanel(panel: 'queue' | 'chat') {
     setActivePanel(panel);
+    if (panel === 'chat') {
+      shouldAutoScrollChat.current = true;
+      setUnreadChatCount(0);
+    }
     if (sidePanelCollapsed) {
       setSidePanelCollapsed(false);
       localStorage.setItem('syncbox:side-panel-collapsed', '0');
@@ -513,6 +565,11 @@ function RoomPage({ roomId }: { roomId: string }) {
     let active = true;
     let joinedUid = '';
     const unsubscribes: Array<() => void> = [];
+    chatMessagesInitialized.current = false;
+    lastObservedChatMessageId.current = null;
+    lastChatMessageId.current = null;
+    setUnreadChatCount(0);
+    setMessages([]);
     async function connect() {
       try {
         const displayName = localStorage.getItem('syncbox:name') || `Guest ${Math.floor(Math.random() * 900 + 100)}`;
@@ -542,7 +599,16 @@ function RoomPage({ roomId }: { roomId: string }) {
             previousVoiceUids.current = nextUids;
             setVoicePresences(nextPresences);
           }, handleAccessError),
-          subscribeRoom<Record<string, Omit<ChatMessage, 'id'>> | null>(roomId, 'messages', (value) => setMessages(normalizeMessages(value)), handleAccessError),
+          subscribeRoom<Record<string, Omit<ChatMessage, 'id'>> | null>(roomId, 'messages', (value) => {
+            const nextMessages = normalizeMessages(value);
+            if (!chatMessagesInitialized.current) {
+              const latestMessageId = nextMessages[nextMessages.length - 1]?.id ?? null;
+              chatMessagesInitialized.current = true;
+              lastObservedChatMessageId.current = latestMessageId;
+              lastChatMessageId.current = latestMessageId;
+            }
+            setMessages(nextMessages);
+          }, handleAccessError),
         );
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : 'Không thể kết nối đến phòng.');
@@ -1012,6 +1078,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     const text = chatText;
     setChatText('');
     shouldAutoScrollChat.current = true;
+    setUnreadChatCount(0);
     try {
       await sendChat(roomId, uid, me.name, text);
     } catch (cause) {
@@ -1188,6 +1255,75 @@ function RoomPage({ roomId }: { roomId: string }) {
     }
   }
 
+  mediaActionsRef.current = {
+    play: () => control('playing'),
+    pause: () => control('paused'),
+    next: () => skip(loopMode === 'one' ? 'off' : loopMode),
+  };
+
+  useEffect(() => {
+    if (!('mediaSession' in navigator) || !('MediaMetadata' in window)) return;
+    if (!playback.video) {
+      navigator.mediaSession.metadata = null;
+      return;
+    }
+
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: playback.video.title,
+      artist: playback.video.channel || 'YouTube',
+      album: meta?.name ? `${meta.name} · Syncbox` : 'Syncbox',
+      artwork: playback.video.thumbnail ? [{ src: playback.video.thumbnail }] : [],
+    });
+    return () => {
+      navigator.mediaSession.metadata = null;
+    };
+  }, [meta?.name, playback.video]);
+
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return;
+    navigator.mediaSession.playbackState = playback.video ? playback.status : 'none';
+  }, [playback.status, playback.video]);
+
+  useEffect(() => {
+    if (!('mediaSession' in navigator) || !navigator.mediaSession.setPositionState) return;
+    const duration = playback.video?.duration ?? 0;
+    try {
+      if (!playback.video || !Number.isFinite(duration) || duration <= 0) {
+        navigator.mediaSession.setPositionState();
+        return;
+      }
+      navigator.mediaSession.setPositionState({
+        duration,
+        playbackRate: 1,
+        position: Math.min(duration, Math.max(0, displayPosition)),
+      });
+    } catch {
+      // Some browsers expose Media Session but reject position state for iframe media.
+    }
+  }, [displayPosition, playback.video]);
+
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return;
+    const mediaSession = navigator.mediaSession;
+    const setHandler = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
+      try {
+        mediaSession.setActionHandler(action, handler);
+      } catch {
+        // Individual actions are not supported consistently across browsers.
+      }
+    };
+
+    setHandler('play', canControlPlayback ? () => { void mediaActionsRef.current.play(); } : null);
+    setHandler('pause', canControlPlayback ? () => { void mediaActionsRef.current.pause(); } : null);
+    setHandler('nexttrack', canControlPlayback ? () => { void mediaActionsRef.current.next(); } : null);
+
+    return () => {
+      setHandler('play', null);
+      setHandler('pause', null);
+      setHandler('nexttrack', null);
+    };
+  }, [canControlPlayback]);
+
   if (loading) return <div className="center-screen"><LoaderCircle className="spin" /><span>Đang vào phòng {roomId}…</span></div>;
   if (error || !meta) return (
     <div className="center-screen error-screen"><Brand /><h2>Không thể mở phòng</h2><p>{error || 'Phòng không còn tồn tại.'}</p><a className="primary-button" href="#/">Về trang chủ</a></div>
@@ -1309,7 +1445,7 @@ function RoomPage({ roomId }: { roomId: string }) {
         <aside className={`side-panel ${sidePanelCollapsed ? 'collapsed' : ''}`}>
           <div className="panel-tabs">
             <button className={activePanel === 'queue' ? 'active' : ''} title="Queue" onClick={() => openSidePanel('queue')}><ListMusic /><b>Queue</b><span>{queue.length}</span></button>
-            <button className={activePanel === 'chat' ? 'active' : ''} title="Chat" onClick={() => openSidePanel('chat')}><MessageCircle /><b>Chat</b>{messages.length > 0 && <span>{messages.length}</span>}</button>
+            <button className={activePanel === 'chat' ? 'active' : ''} title={unreadChatCount > 0 ? `Chat · ${unreadChatCount} tin chưa đọc` : 'Chat'} onClick={() => openSidePanel('chat')}><MessageCircle /><b>Chat</b>{unreadChatCount > 0 && <span className="unread-badge" aria-label={`${unreadChatCount} tin chưa đọc`}>{unreadChatCount > 99 ? '99+' : unreadChatCount}</span>}</button>
             <button className="panel-collapse" title={sidePanelCollapsed ? 'Mở Queue và Chat' : 'Thu gọn Queue và Chat'} aria-label={sidePanelCollapsed ? 'Mở Queue và Chat' : 'Thu gọn Queue và Chat'} onClick={toggleSidePanel}>
               {sidePanelCollapsed ? <PanelRightOpen /> : <PanelRightClose />}
             </button>
@@ -1385,6 +1521,12 @@ function RoomPage({ roomId }: { roomId: string }) {
                 })}
                 {messages.length === 0 && <div className="empty-list"><MessageCircle /><span>{meta.chatEnabled === false ? 'Chat đang được Host tắt' : 'Cuộc trò chuyện bắt đầu ở đây'}</span></div>}
               </div>
+              {unreadChatCount > 0 && (
+                <button className="chat-jump-latest" type="button" onClick={scrollChatToLatest} aria-label={`Đi đến ${unreadChatCount} tin nhắn mới nhất`}>
+                  <ArrowDown size={14} />
+                  <span>{unreadChatCount > 99 ? '99+' : unreadChatCount} tin mới</span>
+                </button>
+              )}
               <form className="chat-form" onSubmit={submitChat}><input value={chatText} onChange={(event) => setChatText(event.target.value)} placeholder={meta.chatEnabled === false ? 'Chat đã bị tắt' : 'Nhắn cho mọi người…'} disabled={meta.chatEnabled === false} maxLength={500} /><button disabled={meta.chatEnabled === false}><ChevronRight /></button></form>
             </div>
           )}
@@ -1501,7 +1643,8 @@ function RoomPage({ roomId }: { roomId: string }) {
               <article><i><Repeat2 /></i><div><strong>Loop</strong><span>Chuyển giữa không lặp, lặp một bài và lặp toàn bộ queue.</span></div></article>
               <article><i><GripVertical /></i><div><strong>Sắp xếp queue</strong><span>Kéo bài lên hoặc xuống; đường sáng cho biết vị trí sẽ thả.</span></div></article>
               <article><i><ThumbsUp /></i><div><strong>Bình chọn</strong><span>Mỗi người có một vote để thể hiện bài muốn nghe tiếp.</span></div></article>
-              <article><i><MessageCircle /></i><div><strong>Chat</strong><span>Trò chuyện với mọi người trong tab Chat nếu phòng đang bật chat.</span></div></article>
+              <article><i><MessageCircle /></i><div><strong>Chat</strong><span>Badge hiển thị tin chưa đọc và tự xóa khi bạn mở chat hoặc cuộn xuống cuối.</span></div></article>
+              <article><i><AudioWaveform /></i><div><strong>Điều khiển hệ thống</strong><span>Bài đang phát hiện trên màn hình khóa và phím media; Owner, Co-host và DJ có thể Play, Pause, Next.</span></div></article>
               <article><i><Sparkles /></i><div><strong>SponsorBlock</strong><span>Tự bỏ qua sponsor và các phân đoạn cộng đồng đã đánh dấu.</span></div></article>
               <article><i><Mic /></i><div><strong>Voice Lounge</strong><span>Bấm Tham gia trong danh sách thành viên và cho phép trình duyệt dùng microphone.</span></div></article>
               <article><i><VolumeX /></i><div><strong>Mute / Deafen</strong><span>Mute tắt microphone; Deafen tắt âm thanh của mọi người và đồng thời tắt mic của bạn.</span></div></article>
