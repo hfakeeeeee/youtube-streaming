@@ -89,6 +89,7 @@ import {
   toggleQueueVote,
   unbanMember,
   updateMemberRole,
+  updateMusicMuted,
   updateQueuePlaybackIssue,
   updateCoHost,
   updateDisplayName,
@@ -520,6 +521,13 @@ function RoomPage({ roomId }: { roomId: string }) {
   }, [needsActivation]);
 
   const me = useMemo(() => members.find((member) => member.uid === uid), [members, uid]);
+  const localMusicMuted = localVolume <= 0;
+
+  useEffect(() => {
+    if (!uid || me?.uid !== uid || me.musicMuted === localMusicMuted) return;
+    void updateMusicMuted(roomId, uid, localMusicMuted).catch(() => undefined);
+  }, [localMusicMuted, me?.musicMuted, me?.uid, roomId, uid]);
+
   const isOwner = Boolean(uid && meta?.hostUid === uid);
   const isCoHost = Boolean(uid && meta?.coHosts?.[uid]);
   const isHost = isOwner || isCoHost;
@@ -2160,7 +2168,7 @@ function RoomPage({ roomId }: { roomId: string }) {
               <section className="roster-group" key={group.key}>
                 <h3>{group.label} — {group.members.length}</h3>
                 {group.members.map((member) => (
-                  <article className={`member roster-member ${speakingUids.has(member.uid) ? 'speaking' : ''}`} key={member.uid} title={`${member.name}${voiceByUid.has(member.uid) ? ' · Trong voice' : ''}`}>
+                  <article className={`member roster-member ${member.musicMuted ? 'music-muted' : ''} ${speakingUids.has(member.uid) ? 'speaking' : ''}`} key={member.uid} title={`${member.name}${voiceByUid.has(member.uid) ? ' · Trong voice' : ''}${member.musicMuted ? ' · Đã tắt tiếng nhạc' : ' · Đang bật tiếng nhạc'}`}>
                     <div className={`member-avatar ${voiceByUid.has(member.uid) ? 'in-voice' : ''}`}>
                       {member.name.slice(0, 1).toUpperCase()}
                       <i className="member-presence" />
@@ -2168,6 +2176,7 @@ function RoomPage({ roomId }: { roomId: string }) {
                     <div className="member-copy">
                       <strong>{member.name} {member.uid === uid && <small>(bạn)</small>}</strong>
                       <span>{voiceByUid.has(member.uid) ? <>{voiceByUid.get(member.uid)?.muted ? <MicOff size={10} /> : <Mic size={10} />} Trong voice</> : member.uid === meta.hostUid ? 'Owner phòng' : meta.coHosts?.[member.uid] ? 'Co-host' : member.role === 'dj' ? 'DJ' : 'Đang nghe'}</span>
+                      {member.musicMuted && <span className="music-muted-label"><VolumeX size={10} /> Đã tắt tiếng nhạc</span>}
                     </div>
                     {member.uid === meta.hostUid ? <Crown className="host-crown" size={17} /> : meta.coHosts?.[member.uid] ? (
                       isOwner ? <span className="member-inline-actions"><button className="cohost-button active" title="Thu hồi quyền Co-host" onClick={() => void setCoHost(member, false)}><ShieldCheck size={15} /></button>{voiceByUid.has(member.uid) && <button className={`voice-force-mute ${voiceByUid.get(member.uid)?.forcedMuted ? 'active' : ''}`} title={voiceByUid.get(member.uid)?.forcedMuted ? 'Cho phép bật mic' : 'Mute khỏi voice'} onClick={() => void toggleMemberVoiceMute(member)}><MicOff size={14} /></button>}</span> : <ShieldCheck className="cohost-mark" size={17} />

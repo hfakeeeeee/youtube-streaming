@@ -422,6 +422,8 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 .roster-member .member-copy strong { color: #c9c6d3; font-size: 11px; }
 .roster-member .member-copy strong small { color: #777383; font-size: 8px; font-weight: 500; }
 .roster-member .member-copy span { display: flex; align-items: center; gap: 3px; color: #716d7d; font-size: 9px; }
+.roster-member.music-muted .member-avatar { opacity: .62; filter: saturate(.65); }
+.roster-member .member-copy .music-muted-label { color: #d58b98; }
 .roster-member .member-admin { display: none; grid-column: 2 / -1; justify-content: flex-end; padding-top: 3px; }
 .roster-member:hover .member-admin, .roster-member:focus-within .member-admin { display: flex; }
 .connection-banner { position: fixed; z-index: 70; top: 76px; left: 50%; display: flex; align-items: center; gap: 7px; padding: 8px 13px; border: 1px solid rgba(251,191,36,.25); border-top: 0; border-radius: 0 0 10px 10px; color: #f5d579; background: rgba(52,39,12,.96); box-shadow: 0 10px 30px rgba(0,0,0,.3); font-size: 11px; transform: translateX(-50%); }

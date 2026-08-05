@@ -41,6 +41,7 @@ export interface Member {
   role: Role;
   joinedAt: number;
   online: boolean;
+  musicMuted?: boolean;
 }
 
 export interface VoicePresence {

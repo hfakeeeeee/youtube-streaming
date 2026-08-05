@@ -274,6 +274,11 @@ export function removeQueueItem(roomId: string, queueId: string): Promise<void> 
   return remove(ref(db, `rooms/${roomId}/queue/${queueId}`));
 }
 
+export function updateMusicMuted(roomId: string, uid: string, musicMuted: boolean): Promise<void> {
+  const { db } = requireFirebase();
+  return update(ref(db, `rooms/${roomId}/members/${uid}`), { musicMuted });
+}
+
 export function updateQueuePlaybackIssue(roomId: string, queueId: string, issue: Omit<QueuePlaybackIssue, 'updatedAt'> | null): Promise<void> {
   const { db } = requireFirebase();
   const issueRef = ref(db, `rooms/${roomId}/queue/${queueId}/playbackIssue`);
