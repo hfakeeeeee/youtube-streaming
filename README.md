@@ -217,7 +217,7 @@ Mở endpoint health sau khi deploy:
 https://syncbox-api.YOUR_SUBDOMAIN.workers.dev/api/health
 ```
 
-Kết quả có `"voice":true` nghĩa là đủ ba secret voice. Trường `"appCheck":true` chỉ xuất hiện sau khi Worker có `FIREBASE_PROJECT_NUMBER` và `FIREBASE_APP_ID`. Nếu `voice` là `false`, các tính năng nghe nhạc vẫn chạy nhưng nút tham gia voice sẽ báo chưa cấu hình.
+Kết quả có `"voice":true` nghĩa là đủ ba secret voice. Trường `"appCheck":true` chỉ xuất hiện sau khi Worker có `FIREBASE_APP_ID` hợp lệ. Nếu `voice` là `false`, các tính năng nghe nhạc vẫn chạy nhưng nút tham gia voice sẽ báo chưa cấu hình.
 
 Sau khi sửa `database.rules.json`, nhớ deploy Rules mới:
 
@@ -294,12 +294,11 @@ Syncbox dùng reCAPTCHA Enterprise dạng score-based nên người dùng không
 4. Lấy **Project number** tại Firebase **Project settings > General**. Trong thư mục `worker`, thêm cấu hình bảo vệ custom API:
 
 ```powershell
-npx wrangler secret put FIREBASE_PROJECT_NUMBER
 npx wrangler secret put FIREBASE_APP_ID
 npm run deploy
 ```
 
-`FIREBASE_APP_ID` ở Worker dùng cùng giá trị với `VITE_FIREBASE_APP_ID`. Khi đủ hai giá trị này, Worker bắt buộc và xác minh chữ ký App Check cho mọi API trừ `/api/health`; nếu chưa cấu hình, Worker vẫn chạy ở chế độ tương thích để bạn rollout an toàn.
+`FIREBASE_APP_ID` ở Worker dùng cùng giá trị với `VITE_FIREBASE_APP_ID`. Worker tự lấy Project Number từ App ID này, sau đó bắt buộc và xác minh chữ ký App Check cho mọi API trừ `/api/health`; nếu chưa cấu hình, Worker vẫn chạy ở chế độ tương thích để bạn rollout an toàn.
 
 5. Kiểm tra Firebase App Check metrics. Khi request hợp lệ đã xuất hiện ổn định, mới bấm **Enforce** cho **Realtime Database**.
 

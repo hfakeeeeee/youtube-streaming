@@ -23,6 +23,7 @@ interface Props {
   videoId?: string;
   startSeconds?: number;
   autoPlay?: boolean;
+  embedMode?: 'private' | 'standard';
   onReady?: () => void;
   onCued?: (videoId: string) => void;
   onPlaying?: (videoId: string) => void;
@@ -51,7 +52,7 @@ function loadApi(): Promise<any> {
   return apiPromise;
 }
 
-function buildEmbedUrl(videoId: string | undefined, startSeconds: number): string {
+function buildEmbedUrl(videoId: string | undefined, startSeconds: number, embedMode: 'private' | 'standard'): string {
   const params = new URLSearchParams({
     enablejsapi: '1',
     autoplay: '0',
@@ -61,18 +62,19 @@ function buildEmbedUrl(videoId: string | undefined, startSeconds: number): strin
     origin: window.location.origin,
   });
   if (startSeconds > 0) params.set('start', String(Math.floor(startSeconds)));
-  return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId ?? '')}?${params}`;
+  const host = embedMode === 'private' ? 'www.youtube-nocookie.com' : 'www.youtube.com';
+  return `https://${host}/embed/${encodeURIComponent(videoId ?? '')}?${params}`;
 }
 
 export const YouTubePlayer = forwardRef<PlayerHandle, Props>(function YouTubePlayer(
-  { videoId, startSeconds = 0, autoPlay = false, onReady, onCued, onPlaying, onEnded, onError, onAutoplayBlocked },
+  { videoId, startSeconds = 0, autoPlay = false, embedMode = 'private', onReady, onCued, onPlaying, onEnded, onError, onAutoplayBlocked },
   forwardedRef,
 ) {
   const mountRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<any>(null);
   const iframeId = useRef(`syncbox-youtube-${Math.random().toString(36).slice(2)}`).current;
   const latestCallbacks = useRef({ onReady, onCued, onPlaying, onEnded, onError, onAutoplayBlocked });
-  const initialVideo = useRef({ videoId, startSeconds });
+  const initialVideo = useRef({ videoId, startSeconds, embedMode });
   const latestStartSeconds = useRef(startSeconds);
   const [ready, setReady] = useState(false);
   latestCallbacks.current = { onReady, onCued, onPlaying, onEnded, onError, onAutoplayBlocked };
@@ -98,20 +100,20 @@ export const YouTubePlayer = forwardRef<PlayerHandle, Props>(function YouTubePla
     const mount = mountRef.current;
     if (!mount) return undefined;
 
-    // Purify-style player: the iframe must be credentialless before its src is
-    // assigned so YouTube loads inside a fresh, ephemeral cookie/storage jar.
+    // Start in the isolated privacy mode. Recovery may deliberately fall back
+    // to the standard embed when YouTube needs normal client identification.
     const iframe = document.createElement('iframe');
     iframe.id = iframeId;
     iframe.title = 'YouTube video player';
     iframe.width = '100%';
     iframe.height = '100%';
     iframe.setAttribute('frameborder', '0');
-    iframe.setAttribute('credentialless', '');
+    if (initialVideo.current.embedMode === 'private') iframe.setAttribute('credentialless', '');
     iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-presentation');
     iframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; fullscreen; web-share');
     iframe.setAttribute('allowfullscreen', '');
     iframe.referrerPolicy = 'strict-origin-when-cross-origin';
-    iframe.src = buildEmbedUrl(initialVideo.current.videoId, initialVideo.current.startSeconds);
+    iframe.src = buildEmbedUrl(initialVideo.current.videoId, initialVideo.current.startSeconds, initialVideo.current.embedMode);
     mount.replaceChildren(iframe);
 
     loadApi().then((YT) => {

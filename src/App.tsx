@@ -378,7 +378,7 @@ function youtubeErrorDescription(code: number): { message: string; retryable: bo
   if (code === 5) return { message: 'Trình duyệt gặp lỗi khi giải mã video.', retryable: true };
   if (code === 100) return { message: 'Video đã bị xoá hoặc đang ở chế độ riêng tư.', retryable: false };
   if (code === 101 || code === 150) return { message: 'Chủ video không cho phép phát trên website khác.', retryable: false };
-  if (code === 153) return { message: 'YouTube từ chối cấu hình phát nhúng của video này.', retryable: false };
+  if (code === 153) return { message: 'YouTube không nhận được thông tin nhận diện của player.', retryable: true };
   return { message: `YouTube không thể phát video này (mã lỗi ${code}).`, retryable: true };
 }
 
@@ -427,11 +427,13 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [settingsSponsorCategories, setSettingsSponsorCategories] = useState<string[]>([]);
   const [helpOpen, setHelpOpen] = useState(false);
   const [playerAttempt, setPlayerAttempt] = useState(0);
+  const [playerEmbedMode, setPlayerEmbedMode] = useState<'private' | 'standard'>('private');
   const [playerIssue, setPlayerIssue] = useState('');
   const [draggedQueueId, setDraggedQueueId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ queueId: string; position: 'before' | 'after' } | null>(null);
   const [undoQueue, setUndoQueue] = useState<{ items: QueueItem[]; label: string } | null>(null);
   const playerRef = useRef<PlayerHandle>(null);
+  const needsActivationRef = useRef(false);
   const videoStageRef = useRef<HTMLDivElement>(null);
   const lastSponsorSkip = useRef('');
   const pendingQueueStart = useRef<string | null>(null);
@@ -440,6 +442,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   const nonRetryablePlayerVideo = useRef('');
   const playerFailureTimer = useRef<number | undefined>(undefined);
   const skippedFailedVideo = useRef('');
+  const reportedPlayerFailure = useRef('');
   const undoTimer = useRef<number | undefined>(undefined);
   const voiceClientRef = useRef<VoiceClient | null>(null);
   const previousVoiceUids = useRef<Set<string> | null>(null);
@@ -461,6 +464,10 @@ function RoomPage({ roomId }: { roomId: string }) {
     pause: async () => undefined,
     next: async () => undefined,
   });
+
+  useEffect(() => {
+    needsActivationRef.current = needsActivation;
+  }, [needsActivation]);
 
   const me = useMemo(() => members.find((member) => member.uid === uid), [members, uid]);
   const isOwner = Boolean(uid && meta?.hostUid === uid);
@@ -972,8 +979,10 @@ function RoomPage({ roomId }: { roomId: string }) {
     if (!playback.video) return;
     if (playerRecovery.current.videoId !== playback.video.id) {
       playerRecovery.current = { videoId: playback.video.id, attempts: 0 };
+      setPlayerEmbedMode('private');
       nonRetryablePlayerVideo.current = '';
       skippedFailedVideo.current = '';
+      reportedPlayerFailure.current = '';
       window.clearTimeout(playerFailureTimer.current);
     }
 
@@ -987,14 +996,26 @@ function RoomPage({ roomId }: { roomId: string }) {
       attempts += 1;
       player.seek(0);
       player.play();
-      if (attempts >= 3) setNeedsActivation(true);
+      if (attempts >= 3) {
+        setNeedsActivation(true);
+        window.clearInterval(retryTimer);
+      }
     };
     const firstRetry = window.setTimeout(retry, 700);
     const retryTimer = window.setInterval(retry, 1800);
-    const recoveryDelay = playerRecovery.current.attempts === 0 ? 8000 : 12000;
+    const recoveryDelay = playerEmbedMode === 'private' ? 12000 : 20000;
     const issueTimer = window.setTimeout(() => {
       const player = playerRef.current;
-      const healthy = Boolean(player && player.videoId() === playback.video?.id && player.state() === 1);
+      const state = player?.state() ?? -1;
+      // Paused, buffering and cued are valid states. They may mean autoplay is
+      // waiting for user activation, not that the video is broken.
+      const correctVideo = Boolean(player && player.videoId() === playback.video?.id);
+      if (correctVideo && state === 3) {
+        setPlayerIssue('Video đang buffer lâu hơn bình thường. Syncbox vẫn giữ nguyên bài; bạn có thể chờ hoặc tải lại player.');
+        return;
+      }
+      const healthyState = [1, 5].includes(state) || (state === 2 && needsActivationRef.current);
+      const healthy = correctVideo && healthyState;
       if (!healthy && (playback.status === 'playing' || playback.reason === 'queue')) {
         const videoId = playback.video?.id ?? '';
         const recovery = playerRecovery.current;
@@ -1007,20 +1028,20 @@ function RoomPage({ roomId }: { roomId: string }) {
           }
           return;
         }
+        if (videoId && recovery.videoId === videoId && playerEmbedMode === 'private') {
+          recovery.attempts += 1;
+          if (playback.status === 'paused' && playback.reason === 'queue' && canControlPlayback) pendingQueueStart.current = videoId;
+          setPlayerIssue('Chế độ phát riêng tư chưa phản hồi. Đang thử player tiêu chuẩn…');
+          setPlayerEmbedMode('standard');
+          return;
+        }
         if (videoId && recovery.videoId === videoId && recovery.attempts < 2) {
           recovery.attempts += 1;
           if (playback.status === 'paused' && playback.reason === 'queue' && canControlPlayback) pendingQueueStart.current = videoId;
           setPlayerAttempt((attempt) => attempt + 1);
           return;
         }
-        const message = 'Player chưa thể tải hoặc phát video sau 2 lần tự khôi phục.';
-        setPlayerIssue(isPlaybackCoordinator ? `${message} Syncbox sẽ bỏ qua bài này.` : message);
-        if (isPlaybackCoordinator && skippedFailedVideo.current !== videoId) {
-          skippedFailedVideo.current = videoId;
-          playerFailureTimer.current = window.setTimeout(() => {
-            void skipRef.current('off', `tự bỏ qua “${playback.video?.title ?? 'video'}” vì không tải được`);
-          }, 3500);
-        }
+        setPlayerIssue('Player chưa thể phát sau khi tự khôi phục. Bài hát được giữ nguyên; hãy thử tải lại hoặc để Host bỏ qua.');
       }
     }, recoveryDelay);
     return () => {
@@ -1028,7 +1049,7 @@ function RoomPage({ roomId }: { roomId: string }) {
       window.clearInterval(retryTimer);
       window.clearTimeout(issueTimer);
     };
-  }, [canControlPlayback, isPlaybackCoordinator, playback.reason, playback.revision, playback.status, playback.video, playerAttempt]);
+  }, [canControlPlayback, isPlaybackCoordinator, playback.reason, playback.revision, playback.status, playback.video, playerAttempt, playerEmbedMode]);
 
   useEffect(() => {
     conformPlayer();
@@ -1322,6 +1343,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     playerRecovery.current = { videoId, attempts: 0 };
     nonRetryablePlayerVideo.current = '';
     skippedFailedVideo.current = '';
+    reportedPlayerFailure.current = '';
     window.clearTimeout(playerFailureTimer.current);
     setNeedsActivation(false);
     setPlayerIssue('');
@@ -1347,9 +1369,11 @@ function RoomPage({ roomId }: { roomId: string }) {
       playerRecovery.current = { videoId: playback.video.id, attempts: 0 };
       nonRetryablePlayerVideo.current = '';
     }
+    setPlayerEmbedMode('private');
     setPlayerIssue('');
     setNeedsActivation(false);
     skippedFailedVideo.current = '';
+    reportedPlayerFailure.current = '';
     window.clearTimeout(playerFailureTimer.current);
     if (playback.status === 'paused' && playback.reason === 'queue' && playback.video) {
       pendingQueueStart.current = playback.video.id;
@@ -1362,10 +1386,25 @@ function RoomPage({ roomId }: { roomId: string }) {
     const videoId = playback.video.id;
     const failure = youtubeErrorDescription(code);
     window.clearTimeout(playerFailureTimer.current);
-    if (failure.retryable && playerRecovery.current.attempts < 2) {
-      playerRecovery.current.attempts += 1;
-      setPlayerIssue(`${failure.message} Đang thử lại (${playerRecovery.current.attempts}/2)…`);
-      playerFailureTimer.current = window.setTimeout(() => setPlayerAttempt((attempt) => attempt + 1), 1200 * playerRecovery.current.attempts);
+    if (failure.retryable) {
+      if (playerEmbedMode === 'private') {
+        playerRecovery.current.attempts = Math.max(1, playerRecovery.current.attempts);
+        setPlayerIssue(`${failure.message} Đang chuyển sang player tiêu chuẩn…`);
+        playerFailureTimer.current = window.setTimeout(() => setPlayerEmbedMode('standard'), 1200);
+        return;
+      }
+      if (playerRecovery.current.attempts < 2) {
+        playerRecovery.current.attempts += 1;
+        setPlayerIssue(`${failure.message} Đang thử tải lại player tiêu chuẩn…`);
+        playerFailureTimer.current = window.setTimeout(() => setPlayerAttempt((attempt) => attempt + 1), 1800);
+        return;
+      }
+      setPlayerIssue(`${failure.message} Syncbox đã dừng tự khôi phục và giữ nguyên bài hát. Hãy tải lại player hoặc để Host bỏ qua.`);
+      const reportKey = `${videoId}:${code}`;
+      if (isPlaybackCoordinator && reportedPlayerFailure.current !== reportKey) {
+        reportedPlayerFailure.current = reportKey;
+        logActivity('video_error', `player lỗi mã ${code} với “${playback.video.title}”; giữ nguyên bài trong queue`);
+      }
       return;
     }
     nonRetryablePlayerVideo.current = videoId;
@@ -1697,11 +1736,12 @@ function RoomPage({ roomId }: { roomId: string }) {
           <div className="video-stage" ref={videoStageRef}>
             {playback.video ? (
               <YouTubePlayer
-                key={playerAttempt}
+                key={`${playerAttempt}-${playerEmbedMode}`}
                 ref={playerRef}
                 videoId={playback.video.id}
                 startSeconds={expectedPosition(playback, serverOffset)}
                 autoPlay={playback.status === 'playing' || (playback.reason === 'queue' && canControlPlayback)}
+                embedMode={playerEmbedMode}
                 onReady={conformPlayer}
                 onCued={handlePlayerCued}
                 onPlaying={handlePlayerPlaying}
@@ -1722,6 +1762,7 @@ function RoomPage({ roomId }: { roomId: string }) {
                 <span>{playerIssue}</span>
                 <div>
                   <button onClick={retryPlayer}><RefreshCw /> Tải lại player</button>
+                  {canControlPlayback && <button onClick={() => void skip('off')}><SkipForward /> Bỏ qua bài</button>}
                   <a href={`https://www.youtube.com/watch?v=${encodeURIComponent(playback.video.id)}`} target="_blank" rel="noreferrer">Mở trên YouTube</a>
                 </div>
               </div>

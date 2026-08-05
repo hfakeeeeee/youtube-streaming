@@ -5,7 +5,6 @@ interface Env {
   FIREBASE_DATABASE_URL?: string;
   FIREBASE_CLIENT_EMAIL?: string;
   FIREBASE_PRIVATE_KEY?: string;
-  FIREBASE_PROJECT_NUMBER?: string;
   FIREBASE_APP_ID?: string;
   CLOUDFLARE_REALTIME_APP_ID?: string;
   CLOUDFLARE_REALTIME_APP_SECRET?: string;
@@ -120,8 +119,15 @@ class RequestError extends Error {
   }
 }
 
+function appCheckConfig(env: Env): { appId: string; projectNumber: string } | null {
+  const appId = env.FIREBASE_APP_ID?.trim() ?? '';
+  const match = appId.match(/^1:(\d+):web:[a-zA-Z0-9]+$/);
+  return match ? { appId, projectNumber: match[1] } : null;
+}
+
 async function verifyAppCheck(request: Request, env: Env): Promise<void> {
-  if (!env.FIREBASE_PROJECT_NUMBER || !env.FIREBASE_APP_ID) return;
+  const config = appCheckConfig(env);
+  if (!config) return;
   const token = request.headers.get('X-Firebase-AppCheck') ?? '';
   const [encodedHeader, encodedPayload, encodedSignature, extra] = token.split('.');
   if (!encodedHeader || !encodedPayload || !encodedSignature || extra) throw new RequestError('App Check không hợp lệ.', 401);
@@ -148,9 +154,9 @@ async function verifyAppCheck(request: Request, env: Env): Promise<void> {
     const audience = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
     const now = Math.floor(Date.now() / 1000);
     if (!valid
-      || payload.iss !== `https://firebaseappcheck.googleapis.com/${env.FIREBASE_PROJECT_NUMBER}`
-      || !audience.includes(`projects/${env.FIREBASE_PROJECT_NUMBER}`)
-      || payload.sub !== env.FIREBASE_APP_ID
+      || payload.iss !== `https://firebaseappcheck.googleapis.com/${config.projectNumber}`
+      || !audience.includes(`projects/${config.projectNumber}`)
+      || payload.sub !== config.appId
       || !payload.exp || payload.exp <= now
       || !payload.iat || payload.iat > now + 60) throw new Error('Invalid claims');
   } catch (error) {
@@ -605,7 +611,7 @@ export default {
       if (url.pathname === '/api/health') response = json(request, env, {
         ok: true,
         voice: voiceConfigured(env),
-        appCheck: Boolean(env.FIREBASE_PROJECT_NUMBER && env.FIREBASE_APP_ID),
+        appCheck: Boolean(appCheckConfig(env)),
       });
       else if (url.pathname === '/api/quota') response = json(request, env, await readSearchQuota(env));
       else if (url.pathname === '/api/search') response = await search(request, env, url);

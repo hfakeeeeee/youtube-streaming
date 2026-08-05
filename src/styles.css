@@ -210,7 +210,7 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 .player-recovery > svg { width: 30px; height: 30px; color: #fb7185; }
 .player-recovery > strong { font: 600 17px 'Space Grotesk'; }
 .player-recovery > span { max-width: 460px; color: #908c9f; font-size: 11px; line-height: 1.55; }
-.player-recovery > div { display: flex; align-items: center; gap: 8px; margin-top: 5px; }
+.player-recovery > div { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; margin-top: 5px; }
 .player-recovery button, .player-recovery a { display: flex; align-items: center; gap: 6px; padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: 8px; color: #d9d4e7; background: rgba(255,255,255,.05); font-size: 10px; text-decoration: none; cursor: pointer; }
 .player-recovery button:hover, .player-recovery a:hover { border-color: rgba(139,92,246,.45); background: rgba(139,92,246,.12); }
 .player-recovery button svg { width: 14px; height: 14px; }
