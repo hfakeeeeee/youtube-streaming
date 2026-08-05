@@ -12,6 +12,7 @@ import {
   Crown,
   Compass,
   CircleHelp,
+  Download,
   Headphones,
   History,
   ListMusic,
@@ -64,11 +65,13 @@ import {
   kickMember,
   normalizeMembers,
   normalizeActivity,
+  normalizeDiagnostics,
   normalizeHistory,
   normalizeMessages,
   normalizeQueue,
   removeQueueItem,
   recordActivity,
+  recordPlaybackDiagnostic,
   reorderQueue,
   renewRoomExpiration,
   restoreQueueItems,
@@ -86,6 +89,7 @@ import {
   toggleQueueVote,
   unbanMember,
   updateMemberRole,
+  updateQueuePlaybackIssue,
   updateCoHost,
   updateDisplayName,
   updateRoomMeta,
@@ -96,7 +100,7 @@ import {
 import { VoiceClient, type VoiceConnectionState } from './lib/voice';
 import { formatDuration } from './lib/youtube';
 import { playPresenceSound, unlockSounds } from './lib/sounds';
-import type { ActivityLogItem, ActivityType, BanRecord, ChatMessage, LoopMode, Member, PlaybackState, PublicRoom, QueueHistoryItem, QueueItem, Role, RoomMeta, SponsorSegment, VideoItem, VoicePresence } from './types';
+import type { ActivityLogItem, ActivityType, BanRecord, ChatMessage, LoopMode, Member, PlaybackDiagnostic, PlaybackState, PublicRoom, QueueHistoryItem, QueueItem, Role, RoomMeta, SponsorSegment, VideoItem, VoicePresence } from './types';
 
 const EMPTY_PLAYBACK: PlaybackState = {
   video: null,
@@ -107,6 +111,11 @@ const EMPTY_PLAYBACK: PlaybackState = {
   revision: 0,
   changedBy: '',
 };
+
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
+}
 
 const SPONSOR_CATEGORY_OPTIONS = [
   ['sponsor', 'Sponsor'],
@@ -190,7 +199,33 @@ function CreatorLinks({ compact = false }: { compact?: boolean }) {
 
 export default function App() {
   const route = useHashRoute();
-  return route.page === 'room' ? <RoomPage roomId={route.roomId} /> : <HomePage />;
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+
+  useEffect(() => {
+    const capturePrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as BeforeInstallPromptEvent);
+    };
+    const clearPrompt = () => setInstallPrompt(null);
+    window.addEventListener('beforeinstallprompt', capturePrompt);
+    window.addEventListener('appinstalled', clearPrompt);
+    return () => {
+      window.removeEventListener('beforeinstallprompt', capturePrompt);
+      window.removeEventListener('appinstalled', clearPrompt);
+    };
+  }, []);
+
+  async function installApp() {
+    if (!installPrompt) return;
+    await installPrompt.prompt();
+    await installPrompt.userChoice;
+    setInstallPrompt(null);
+  }
+
+  return <>
+    {route.page === 'room' ? <RoomPage roomId={route.roomId} /> : <HomePage />}
+    {installPrompt && <button className="pwa-install" onClick={() => void installApp()}><Download size={16} /><span>Cài Syncbox</span></button>}
+  </>;
 }
 
 function HomePage() {
@@ -382,6 +417,16 @@ function youtubeErrorDescription(code: number): { message: string; retryable: bo
   return { message: `YouTube không thể phát video này (mã lỗi ${code}).`, retryable: true };
 }
 
+function playbackEnvironment(): Pick<PlaybackDiagnostic, 'browser' | 'device'> {
+  const agent = navigator.userAgent;
+  const browser = /Edg\//.test(agent) ? 'edge'
+    : /Firefox\//.test(agent) ? 'firefox'
+      : /Chrome\//.test(agent) ? 'chrome'
+        : /Safari\//.test(agent) ? 'safari'
+          : 'other';
+  return { browser, device: /Android|iPhone|iPad|iPod|Mobile/i.test(agent) ? 'mobile' : 'desktop' };
+}
+
 function RoomPage({ roomId }: { roomId: string }) {
   const [uid, setUid] = useState('');
   const [meta, setMeta] = useState<RoomMeta | null>(null);
@@ -397,6 +442,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [speakingUids, setSpeakingUids] = useState<Set<string>>(() => new Set());
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [activity, setActivity] = useState<ActivityLogItem[]>([]);
+  const [diagnostics, setDiagnostics] = useState<PlaybackDiagnostic[]>([]);
   const [unreadChatCount, setUnreadChatCount] = useState(0);
   const [bans, setBans] = useState<BanRecord[]>([]);
   const [segments, setSegments] = useState<SponsorSegment[]>([]);
@@ -443,13 +489,17 @@ function RoomPage({ roomId }: { roomId: string }) {
   const playerFailureTimer = useRef<number | undefined>(undefined);
   const skippedFailedVideo = useRef('');
   const reportedPlayerFailure = useRef('');
+  const playbackStartedAt = useRef({ videoId: '', at: performance.now() });
+  const reportedPlaybackSuccess = useRef('');
   const undoTimer = useRef<number | undefined>(undefined);
   const voiceClientRef = useRef<VoiceClient | null>(null);
   const previousVoiceUids = useRef<Set<string> | null>(null);
   const voiceRecoveryAttempts = useRef(0);
   const voiceShouldRecover = useRef(false);
   const joinVoiceRef = useRef<() => Promise<void>>(async () => undefined);
-  const skipRef = useRef<(mode?: LoopMode, activityText?: string) => Promise<void>>(async () => undefined);
+  const skipRef = useRef<(mode?: LoopMode, activityText?: string, preserveCurrent?: boolean) => Promise<void>>(async () => undefined);
+  const reportPlaybackDiagnosticRef = useRef<(event: PlaybackDiagnostic['event'], playerState: number, extra?: { startupMs?: number; errorCode?: number }) => void>(() => undefined);
+  const markCurrentPlaybackIssueRef = useRef<(status: 'retrying' | 'failed', message: string, code?: number) => void>(() => undefined);
   const databaseWasDisconnected = useRef(false);
   const messagesRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollChat = useRef(true);
@@ -487,6 +537,19 @@ function RoomPage({ roomId }: { roomId: string }) {
   const sponsorCategoryKey = meta?.sponsorCategories.join(',') ?? 'sponsor';
   const loopMode: LoopMode = meta?.loopMode ?? 'off';
   const queueDuration = useMemo(() => queue.reduce((total, item) => total + (item.duration ?? 0), 0), [queue]);
+  const diagnosticSummary = useMemo(() => {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    const recent = diagnostics.filter((item) => item.createdAt >= cutoff);
+    const starts = recent.filter((item) => item.event === 'playing');
+    const measured = starts.filter((item) => typeof item.startupMs === 'number');
+    return {
+      total: recent.length,
+      starts: starts.length,
+      errors: recent.filter((item) => item.event === 'error').length,
+      fallbacks: recent.filter((item) => item.event === 'fallback').length,
+      averageStartup: measured.length > 0 ? Math.round(measured.reduce((sum, item) => sum + (item.startupMs ?? 0), 0) / measured.length) : 0,
+    };
+  }, [diagnostics]);
   const onlineMemberCount = useMemo(() => members.filter((member) => member.online).length, [members]);
   const voiceByUid = useMemo(() => new Map(voicePresences.map((presence) => [presence.uid, presence])), [voicePresences]);
   const forcedVoiceMuted = Boolean(voiceByUid.get(uid)?.forcedMuted);
@@ -728,6 +791,34 @@ function RoomPage({ roomId }: { roomId: string }) {
     void recordActivity(roomId, me, type, text).catch(() => undefined);
   }
 
+  function reportPlaybackDiagnostic(event: PlaybackDiagnostic['event'], playerState: number, extra: { startupMs?: number; errorCode?: number } = {}) {
+    if (!isPlaybackCoordinator || !playback.video) return;
+    void recordPlaybackDiagnostic(roomId, {
+      event,
+      videoId: playback.video.id,
+      embedMode: playerEmbedMode,
+      playerState,
+      ...extra,
+      ...playbackEnvironment(),
+    }).catch(() => undefined);
+  }
+
+  function markCurrentPlaybackIssue(status: 'retrying' | 'failed', message: string, code?: number) {
+    if (!isPlaybackCoordinator || !playback.video) return;
+    const current = queue.find((item) => item.id === playback.video?.id);
+    if (!current) return;
+    void updateQueuePlaybackIssue(roomId, current.queueId, {
+      status,
+      message: message.slice(0, 240),
+      ...(typeof code === 'number' ? { code } : {}),
+      embedMode: playerEmbedMode,
+      attempts: playerRecovery.current.attempts,
+    }).catch(() => undefined);
+  }
+
+  reportPlaybackDiagnosticRef.current = reportPlaybackDiagnostic;
+  markCurrentPlaybackIssueRef.current = markCurrentPlaybackIssue;
+
   function openProfile() {
     setNameDraft(me?.name ?? localStorage.getItem('syncbox:name') ?? '');
     setProfileOpen(true);
@@ -769,6 +860,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     setUnreadChatCount(0);
     setMessages([]);
     setActivity([]);
+    setDiagnostics([]);
     setQueueHistory([]);
     async function connect() {
       try {
@@ -813,6 +905,9 @@ function RoomPage({ roomId }: { roomId: string }) {
           subscribeRoom<Record<string, Omit<ActivityLogItem, 'id'>> | null>(roomId, 'activity', (value) => {
             setActivity(normalizeActivity(value));
           }, () => setActivity([])),
+          subscribeRoom<Record<string, Omit<PlaybackDiagnostic, 'id'>> | null>(roomId, 'diagnostics', (value) => {
+            setDiagnostics(normalizeDiagnostics(value));
+          }, () => setDiagnostics([])),
         );
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : 'Không thể kết nối đến phòng.');
@@ -979,6 +1074,8 @@ function RoomPage({ roomId }: { roomId: string }) {
     if (!playback.video) return;
     if (playerRecovery.current.videoId !== playback.video.id) {
       playerRecovery.current = { videoId: playback.video.id, attempts: 0 };
+      playbackStartedAt.current = { videoId: playback.video.id, at: performance.now() };
+      reportedPlaybackSuccess.current = '';
       setPlayerEmbedMode('private');
       nonRetryablePlayerVideo.current = '';
       skippedFailedVideo.current = '';
@@ -1011,7 +1108,10 @@ function RoomPage({ roomId }: { roomId: string }) {
       // waiting for user activation, not that the video is broken.
       const correctVideo = Boolean(player && player.videoId() === playback.video?.id);
       if (correctVideo && state === 3) {
-        setPlayerIssue('Video đang buffer lâu hơn bình thường. Syncbox vẫn giữ nguyên bài; bạn có thể chờ hoặc tải lại player.');
+        const message = 'Video đang buffer lâu hơn bình thường. Syncbox vẫn giữ nguyên bài; bạn có thể chờ hoặc tải lại player.';
+        setPlayerIssue(message);
+        markCurrentPlaybackIssueRef.current('retrying', message);
+        reportPlaybackDiagnosticRef.current('buffering', state);
         return;
       }
       const healthyState = [1, 5].includes(state) || (state === 2 && needsActivationRef.current);
@@ -1023,7 +1123,7 @@ function RoomPage({ roomId }: { roomId: string }) {
           if (isPlaybackCoordinator && skippedFailedVideo.current !== videoId) {
             skippedFailedVideo.current = videoId;
             playerFailureTimer.current = window.setTimeout(() => {
-              void skipRef.current('off', `tự bỏ qua “${playback.video?.title ?? 'video'}” vì YouTube từ chối phát`);
+              void skipRef.current('off', `tự bỏ qua “${playback.video?.title ?? 'video'}” vì YouTube từ chối phát`, true);
             }, 3500);
           }
           return;
@@ -1032,6 +1132,8 @@ function RoomPage({ roomId }: { roomId: string }) {
           recovery.attempts += 1;
           if (playback.status === 'paused' && playback.reason === 'queue' && canControlPlayback) pendingQueueStart.current = videoId;
           setPlayerIssue('Chế độ phát riêng tư chưa phản hồi. Đang thử player tiêu chuẩn…');
+          markCurrentPlaybackIssueRef.current('retrying', 'Đang thử lại bằng player tiêu chuẩn.');
+          reportPlaybackDiagnosticRef.current('fallback', state);
           setPlayerEmbedMode('standard');
           return;
         }
@@ -1041,7 +1143,10 @@ function RoomPage({ roomId }: { roomId: string }) {
           setPlayerAttempt((attempt) => attempt + 1);
           return;
         }
-        setPlayerIssue('Player chưa thể phát sau khi tự khôi phục. Bài hát được giữ nguyên; hãy thử tải lại hoặc để Host bỏ qua.');
+        const message = 'Player chưa thể phát sau khi tự khôi phục. Bài hát được giữ nguyên; hãy thử tải lại hoặc để Host bỏ qua.';
+        setPlayerIssue(message);
+        markCurrentPlaybackIssueRef.current('failed', message);
+        reportPlaybackDiagnosticRef.current('error', state);
       }
     }, recoveryDelay);
     return () => {
@@ -1248,7 +1353,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     }
   }
 
-  async function skip(mode: LoopMode = 'off', activityText?: string) {
+  async function skip(mode: LoopMode = 'off', activityText?: string, preserveCurrent = false) {
     if (!canControlPlayback) return;
     const foundIndex = playback.video ? queue.findIndex((item) => item.id === playback.video?.id) : -1;
     const currentIndex = foundIndex >= 0 ? foundIndex : 0;
@@ -1256,7 +1361,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     const next = queue.length > 1 ? queue[(currentIndex + 1) % queue.length] : undefined;
     const target = mode === 'one' || (mode === 'all' && !next) ? current : next;
     pendingQueueStart.current = target?.id ?? null;
-    await advanceQueue(roomId, uid, queue, playback.video?.id, playback.volume, mode, queueHistory);
+    await advanceQueue(roomId, uid, queue, playback.video?.id, playback.volume, mode, queueHistory, preserveCurrent);
     logActivity(activityText ? 'video_error' : 'track_change', activityText ?? `chuyển sang ${target ? `“${target.title}”` : 'cuối queue'}`);
     if (target && target.id === playback.video?.id) {
       playerRef.current?.seek(0);
@@ -1312,6 +1417,14 @@ function RoomPage({ roomId }: { roomId: string }) {
     const previous = queue.find((entry) => entry.id === playback.video?.id);
     pendingQueueStart.current = item.id;
     try {
+      if (item.playbackIssue) {
+        await updateQueuePlaybackIssue(roomId, item.queueId, {
+          status: 'retrying',
+          message: 'Host đang thử phát lại bài này.',
+          embedMode: 'private',
+          attempts: 0,
+        }).catch(() => undefined);
+      }
       await selectQueueVideo(roomId, uid, item, previous, playback.volume, loopMode === 'off', queueHistory);
       logActivity('track_change', `chọn phát “${item.title}”`);
       if (item.id === playback.video?.id) {
@@ -1322,6 +1435,11 @@ function RoomPage({ roomId }: { roomId: string }) {
       pendingQueueStart.current = null;
       showNotice(cause instanceof Error ? cause.message : 'Không thể chuyển bài.', 'error');
     }
+  }
+
+  function skipFailedVideo() {
+    markCurrentPlaybackIssue('failed', playerIssue || 'Host đã bỏ qua sau khi player không thể tải bài này.');
+    void skip('off', `bỏ qua “${playback.video?.title ?? 'video'}” sau khi player không thể tải`, true);
   }
 
   const handlePlayerCued = useCallback((videoId: string) => {
@@ -1347,6 +1465,14 @@ function RoomPage({ roomId }: { roomId: string }) {
     window.clearTimeout(playerFailureTimer.current);
     setNeedsActivation(false);
     setPlayerIssue('');
+    const successKey = `${videoId}:${playback.revision}`;
+    if (isPlaybackCoordinator && reportedPlaybackSuccess.current !== successKey) {
+      reportedPlaybackSuccess.current = successKey;
+      const startedAt = playbackStartedAt.current.videoId === videoId ? playbackStartedAt.current.at : performance.now();
+      reportPlaybackDiagnosticRef.current('playing', 1, { startupMs: Math.min(300000, Math.max(0, Math.round(performance.now() - startedAt))) });
+      const current = queue.find((item) => item.id === videoId);
+      if (current?.playbackIssue) void updateQueuePlaybackIssue(roomId, current.queueId, null).catch(() => undefined);
+    }
     if (playback.status !== 'paused' || playback.reason !== 'queue' || !canControlPlayback) return;
     pendingQueueStart.current = null;
     // Rebase at zero at the moment playback truly starts. CUED only means the
@@ -1354,7 +1480,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     void writePlayback(roomId, uid, { status: 'playing', position: 0, reason: 'queue' }).catch((cause) => {
       showNotice(cause instanceof Error ? cause.message : 'Không thể bắt đầu video.', 'error');
     });
-  }, [canControlPlayback, playback.reason, playback.status, playback.video?.id, roomId, uid]);
+  }, [canControlPlayback, isPlaybackCoordinator, playback.reason, playback.revision, playback.status, playback.video?.id, queue, roomId, uid]);
 
   function handlePlayerEnded() {
     if (!isPlaybackCoordinator || handledEndedRevision.current === playback.revision) return;
@@ -1374,6 +1500,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     setNeedsActivation(false);
     skippedFailedVideo.current = '';
     reportedPlayerFailure.current = '';
+    markCurrentPlaybackIssue('retrying', 'Đang tải lại player theo yêu cầu của Host.');
     window.clearTimeout(playerFailureTimer.current);
     if (playback.status === 'paused' && playback.reason === 'queue' && playback.video) {
       pendingQueueStart.current = playback.video.id;
@@ -1385,21 +1512,26 @@ function RoomPage({ roomId }: { roomId: string }) {
     if (!playback.video) return;
     const videoId = playback.video.id;
     const failure = youtubeErrorDescription(code);
+    reportPlaybackDiagnostic('error', playerRef.current?.state() ?? -1, { errorCode: code });
     window.clearTimeout(playerFailureTimer.current);
     if (failure.retryable) {
       if (playerEmbedMode === 'private') {
         playerRecovery.current.attempts = Math.max(1, playerRecovery.current.attempts);
         setPlayerIssue(`${failure.message} Đang chuyển sang player tiêu chuẩn…`);
+        markCurrentPlaybackIssue('retrying', `${failure.message} Đang thử player tiêu chuẩn.`, code);
+        reportPlaybackDiagnostic('fallback', playerRef.current?.state() ?? -1, { errorCode: code });
         playerFailureTimer.current = window.setTimeout(() => setPlayerEmbedMode('standard'), 1200);
         return;
       }
       if (playerRecovery.current.attempts < 2) {
         playerRecovery.current.attempts += 1;
         setPlayerIssue(`${failure.message} Đang thử tải lại player tiêu chuẩn…`);
+        markCurrentPlaybackIssue('retrying', `${failure.message} Đang tải lại player tiêu chuẩn.`, code);
         playerFailureTimer.current = window.setTimeout(() => setPlayerAttempt((attempt) => attempt + 1), 1800);
         return;
       }
       setPlayerIssue(`${failure.message} Syncbox đã dừng tự khôi phục và giữ nguyên bài hát. Hãy tải lại player hoặc để Host bỏ qua.`);
+      markCurrentPlaybackIssue('failed', failure.message, code);
       const reportKey = `${videoId}:${code}`;
       if (isPlaybackCoordinator && reportedPlayerFailure.current !== reportKey) {
         reportedPlayerFailure.current = reportKey;
@@ -1408,11 +1540,12 @@ function RoomPage({ roomId }: { roomId: string }) {
       return;
     }
     nonRetryablePlayerVideo.current = videoId;
+    markCurrentPlaybackIssue('failed', failure.message, code);
     setPlayerIssue(isPlaybackCoordinator ? `${failure.message} Syncbox sẽ tự chuyển bài.` : failure.message);
     if (isPlaybackCoordinator && skippedFailedVideo.current !== videoId) {
       skippedFailedVideo.current = videoId;
       playerFailureTimer.current = window.setTimeout(() => {
-        void skip('off', `tự bỏ qua “${playback.video?.title ?? 'video'}” · ${failure.message}`);
+        void skip('off', `tự bỏ qua “${playback.video?.title ?? 'video'}” · ${failure.message}`, true);
       }, 3500);
     }
   }
@@ -1762,7 +1895,7 @@ function RoomPage({ roomId }: { roomId: string }) {
                 <span>{playerIssue}</span>
                 <div>
                   <button onClick={retryPlayer}><RefreshCw /> Tải lại player</button>
-                  {canControlPlayback && <button onClick={() => void skip('off')}><SkipForward /> Bỏ qua bài</button>}
+                  {canControlPlayback && <button onClick={skipFailedVideo}><SkipForward /> Bỏ qua bài</button>}
                   <a href={`https://www.youtube.com/watch?v=${encodeURIComponent(playback.video.id)}`} target="_blank" rel="noreferrer">Mở trên YouTube</a>
                 </div>
               </div>
@@ -1850,7 +1983,7 @@ function RoomPage({ roomId }: { roomId: string }) {
               {queueView === 'upcoming' ? <div className="queue-list">
                 {queue.map((item, index) => (
                   <article
-                    className={`queue-item ${playback.video?.id === item.id ? 'current' : ''} ${draggedQueueId === item.queueId ? 'dragging' : ''} ${dropTarget?.queueId === item.queueId ? `drop-${dropTarget.position}` : ''}`}
+                    className={`queue-item ${playback.video?.id === item.id ? 'current' : ''} ${item.playbackIssue ? `has-issue ${item.playbackIssue.status}` : ''} ${draggedQueueId === item.queueId ? 'dragging' : ''} ${dropTarget?.queueId === item.queueId ? `drop-${dropTarget.position}` : ''}`}
                     key={item.queueId}
                     draggable={Boolean(canManageQueue)}
                     onDragStart={() => setDraggedQueueId(item.queueId)}
@@ -1871,8 +2004,10 @@ function RoomPage({ roomId }: { roomId: string }) {
                       <strong title={item.title}>{item.title}</strong>
                       <span title={item.channel}>{item.channel}</span>
                       <small title={`Thêm bởi ${item.addedByName}${item.duration ? ` · ${formatDuration(item.duration)}` : ''}`}>thêm bởi <b>{item.addedByName}</b> {item.duration ? `· ${formatDuration(item.duration)}` : ''}</small>
+                      {item.playbackIssue && <span className="queue-issue" title={item.playbackIssue.message}><WifiOff size={11} /> {item.playbackIssue.status === 'retrying' ? 'Đang thử lại' : 'Không phát được'}{item.playbackIssue.code ? ` · lỗi ${item.playbackIssue.code}` : ''}</span>}
                     </div>
                     <div className="queue-item-actions">
+                      {item.playbackIssue && canControlPlayback && <button className="queue-retry" title="Thử phát lại bài này" onClick={() => void playQueueItem(item)}><RefreshCw size={13} /></button>}
                       <button className={`queue-vote ${item.votes?.[uid] ? 'active' : ''}`} title="Bình chọn bài này" onClick={() => void toggleQueueVote(roomId, item.queueId, uid, Boolean(item.votes?.[uid])).catch((cause) => showNotice(cause instanceof Error ? cause.message : 'Không thể bình chọn.', 'error'))}><ThumbsUp size={13} /><span>{Object.keys(item.votes ?? {}).length || ''}</span></button>
                       {canManageQueue && <span className="queue-move-buttons"><button title="Đưa lên" disabled={index === 0} onClick={() => void moveQueueBy(item.queueId, -1)}><ArrowUp size={12} /></button><button title="Đưa xuống" disabled={index === queue.length - 1} onClick={() => void moveQueueBy(item.queueId, 1)}><ArrowDown size={12} /></button></span>}
                       {canManageQueue && <GripVertical className="queue-grip" size={15} />}
@@ -2082,6 +2217,16 @@ function RoomPage({ roomId }: { roomId: string }) {
                 {voiceState === 'error' && <button onClick={() => { voiceRecoveryAttempts.current = 0; void joinVoice(); }}><RefreshCw size={13} /> Kết nối lại</button>}
               </article>
             </div>
+            <div className="diagnostic-summary">
+              <div><span>24 GIỜ GẦN NHẤT</span><strong>Playback diagnostics</strong><small>Ẩn danh · không lưu UID, tên hoặc nội dung chat</small></div>
+              <dl>
+                <div><dt>{diagnosticSummary.starts}</dt><dd>Lần phát</dd></div>
+                <div><dt>{diagnosticSummary.errors}</dt><dd>Lỗi player</dd></div>
+                <div><dt>{diagnosticSummary.fallbacks}</dt><dd>Fallback</dd></div>
+                <div><dt>{diagnosticSummary.averageStartup ? `${(diagnosticSummary.averageStartup / 1000).toFixed(1)}s` : '—'}</dt><dd>Start trung bình</dd></div>
+              </dl>
+              {diagnosticSummary.total === 0 && <p>Chưa có đủ dữ liệu. Thống kê sẽ xuất hiện khi phòng bắt đầu phát nhạc.</p>}
+            </div>
             <div className="connection-note"><ShieldCheck size={15} /><span>Firebase tự nối lại và đồng bộ thành viên; player tự tải lại tối đa 2 lần; voice tự kết nối lại tối đa 2 lần trước khi cần thao tác thủ công.</span></div>
           </section>
         </div>
@@ -2110,6 +2255,7 @@ function RoomPage({ roomId }: { roomId: string }) {
               <article><i><MessageCircle /></i><div><strong>Chat</strong><span>Badge hiển thị tin chưa đọc và tự xóa khi bạn mở chat hoặc cuộn xuống cuối.</span></div></article>
               <article><i><Bell /></i><div><strong>Thông báo</strong><span>Bật bằng nút chuông trên header để nhận chat mới, thay đổi quyền và voice mute khi tab chạy nền.</span></div></article>
               <article><i><AudioWaveform /></i><div><strong>Media Session</strong><span>Hiển thị bài trên màn hình khóa; Play, Pause và Next phụ thuộc việc trình duyệt có chuyển action từ YouTube iframe cho Syncbox hay không.</span></div></article>
+              <article><i><Download /></i><div><strong>Cài Syncbox</strong><span>Chrome/Edge sẽ hiện nút Cài Syncbox. Trên iPhone, dùng Chia sẻ → Thêm vào Màn hình chính.</span></div></article>
               <article><i><WifiOff /></i><div><strong>Trạng thái kết nối</strong><span>Bấm vào số người đang nghe trên header để kiểm tra Firebase, player, voice và chạy phục hồi thủ công.</span></div></article>
               <article><i><Crown /></i><div><strong>Chuyển Owner</strong><span>Owner bấm biểu tượng vương miện cạnh một thành viên online; Owner cũ sẽ trở thành Co-host.</span></div></article>
               <article><i><Sparkles /></i><div><strong>SponsorBlock</strong><span>Tự bỏ qua sponsor và các phân đoạn cộng đồng đã đánh dấu.</span></div></article>

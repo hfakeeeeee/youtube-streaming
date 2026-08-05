@@ -63,6 +63,9 @@
                 ".write": "auth != null && auth.uid === $uid && root.child('rooms').child($roomId).child('members').child(auth.uid).child('online').val() === true",
                 ".validate": "!newData.exists() || newData.val() === true"
               }
+            },
+            "playbackIssue": {
+              ".validate": "!newData.exists() || (newData.hasChildren(['status','message','embedMode','attempts','updatedAt']) && (newData.child('status').val() === 'retrying' || newData.child('status').val() === 'failed') && newData.child('message').isString() && newData.child('message').val().length > 0 && newData.child('message').val().length <= 240 && (newData.child('embedMode').val() === 'private' || newData.child('embedMode').val() === 'standard') && newData.child('attempts').isNumber() && newData.child('attempts').val() >= 0 && (!newData.child('code').exists() || newData.child('code').isNumber()) && newData.child('updatedAt').isNumber())"
             }
           }
         },
@@ -87,6 +90,14 @@
           "$activityId": {
             ".write": "auth != null && !data.exists() && newData.child('actorUid').val() === auth.uid && newData.child('actorName').val() === root.child('rooms').child($roomId).child('members').child(auth.uid).child('name').val()",
             ".validate": "newData.hasChildren(['type','actorUid','actorName','text','createdAt']) && newData.child('type').isString() && (newData.child('type').val() === 'queue_add' || newData.child('type').val() === 'queue_remove' || newData.child('type').val() === 'queue_clear' || newData.child('type').val() === 'track_change' || newData.child('type').val() === 'video_error' || newData.child('type').val() === 'loop_change' || newData.child('type').val() === 'settings_change' || newData.child('type').val() === 'owner_transfer' || newData.child('type').val() === 'role_change' || newData.child('type').val() === 'moderation') && newData.child('actorName').isString() && newData.child('actorName').val().length > 0 && newData.child('actorName').val().length <= 32 && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 240 && newData.child('createdAt').isNumber()"
+          }
+        },
+        "diagnostics": {
+          ".read": "auth != null && root.child('rooms').child($roomId).child('members').child(auth.uid).exists()",
+          ".indexOn": ["createdAt"],
+          "$diagnosticId": {
+            ".write": "auth != null && !data.exists() && (root.child('rooms').child($roomId).child('meta').child('hostUid').val() === auth.uid || root.child('rooms').child($roomId).child('meta').child('coHosts').child(auth.uid).val() === true || root.child('rooms').child($roomId).child('members').child(auth.uid).child('role').val() === 'dj')",
+            ".validate": "newData.hasChildren(['event','videoId','embedMode','playerState','browser','device','createdAt']) && (newData.child('event').val() === 'playing' || newData.child('event').val() === 'error' || newData.child('event').val() === 'fallback' || newData.child('event').val() === 'buffering') && newData.child('videoId').isString() && newData.child('videoId').val().length === 11 && (newData.child('embedMode').val() === 'private' || newData.child('embedMode').val() === 'standard') && newData.child('playerState').isNumber() && (!newData.child('startupMs').exists() || (newData.child('startupMs').isNumber() && newData.child('startupMs').val() >= 0 && newData.child('startupMs').val() <= 300000)) && (!newData.child('errorCode').exists() || newData.child('errorCode').isNumber()) && (newData.child('browser').val() === 'chrome' || newData.child('browser').val() === 'edge' || newData.child('browser').val() === 'firefox' || newData.child('browser').val() === 'safari' || newData.child('browser').val() === 'other') && (newData.child('device').val() === 'mobile' || newData.child('device').val() === 'desktop') && newData.child('createdAt').isNumber()"
           }
         }
       }

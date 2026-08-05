@@ -16,7 +16,7 @@ import {
   type Database,
   type Unsubscribe,
 } from 'firebase/database';
-import type { ActivityLogItem, ActivityType, BanRecord, ChatMessage, LoopMode, Member, PlaybackState, PublicRoom, QueueHistoryItem, QueueItem, Role, RoomMeta, VideoItem, VoicePresence } from '../types';
+import type { ActivityLogItem, ActivityType, BanRecord, ChatMessage, LoopMode, Member, PlaybackDiagnostic, PlaybackState, PublicRoom, QueueHistoryItem, QueueItem, QueuePlaybackIssue, Role, RoomMeta, VideoItem, VoicePresence } from '../types';
 
 const config = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -274,6 +274,12 @@ export function removeQueueItem(roomId: string, queueId: string): Promise<void> 
   return remove(ref(db, `rooms/${roomId}/queue/${queueId}`));
 }
 
+export function updateQueuePlaybackIssue(roomId: string, queueId: string, issue: Omit<QueuePlaybackIssue, 'updatedAt'> | null): Promise<void> {
+  const { db } = requireFirebase();
+  const issueRef = ref(db, `rooms/${roomId}/queue/${queueId}/playbackIssue`);
+  return issue ? set(issueRef, { ...issue, updatedAt: serverTimestamp() }) : remove(issueRef);
+}
+
 export function toggleQueueVote(roomId: string, queueId: string, uid: string, voted: boolean): Promise<void> {
   const { db } = requireFirebase();
   const voteRef = ref(db, `rooms/${roomId}/queue/${queueId}/votes/${uid}`);
@@ -447,6 +453,7 @@ export async function advanceQueue(
   volume = 80,
   loopMode: LoopMode = 'off',
   history: QueueHistoryItem[] = [],
+  preserveCurrent = false,
 ): Promise<void> {
   const { db } = requireFirebase();
   const foundIndex = currentVideoId ? queue.findIndex((item) => item.id === currentVideoId) : -1;
@@ -454,8 +461,9 @@ export async function advanceQueue(
   const current = queue[currentIndex];
   const next = queue.length > 1 ? queue[(currentIndex + 1) % queue.length] : undefined;
   const updates: Record<string, unknown> = {};
-  appendHistoryUpdate(db, roomId, current, uid, history, updates);
-  if (current && loopMode === 'off') updates[`rooms/${roomId}/queue/${current.queueId}`] = null;
+  if (!preserveCurrent) appendHistoryUpdate(db, roomId, current, uid, history, updates);
+  if (current && loopMode === 'off' && !preserveCurrent) updates[`rooms/${roomId}/queue/${current.queueId}`] = null;
+  if (current && preserveCurrent) updates[`rooms/${roomId}/queue/${current.queueId}/addedAt`] = Date.now();
   if (current && loopMode === 'all' && next) {
     updates[`rooms/${roomId}/queue/${current.queueId}/addedAt`] = Date.now();
   }
@@ -499,6 +507,15 @@ export async function recordActivity(
     text: text.trim().slice(0, 240),
     createdAt: serverTimestamp(),
   });
+}
+
+export async function recordPlaybackDiagnostic(
+  roomId: string,
+  diagnostic: Omit<PlaybackDiagnostic, 'id' | 'createdAt'>,
+): Promise<void> {
+  const { db } = requireFirebase();
+  const diagnosticRef = push(ref(db, `rooms/${roomId}/diagnostics`));
+  await set(diagnosticRef, { ...diagnostic, createdAt: serverTimestamp() });
 }
 
 export function updateRoomMeta(roomId: string, patch: Partial<RoomMeta>): Promise<void> {
@@ -547,6 +564,14 @@ export function normalizeMessages(value: Record<string, Omit<ChatMessage, 'id'>>
 }
 
 export function normalizeActivity(value: Record<string, Omit<ActivityLogItem, 'id'>> | null): ActivityLogItem[] {
+  if (!value) return [];
+  return Object.entries(value)
+    .map(([id, item]) => ({ ...item, id }))
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, 100);
+}
+
+export function normalizeDiagnostics(value: Record<string, Omit<PlaybackDiagnostic, 'id'>> | null): PlaybackDiagnostic[] {
   if (!value) return [];
   return Object.entries(value)
     .map(([id, item]) => ({ ...item, id }))

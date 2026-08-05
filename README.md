@@ -15,8 +15,9 @@ Phòng nghe YouTube cộng tác theo thời gian thực, kết hợp room/queue 
 - Kick, ban, unban và rate limit cho chat/thêm bài; Owner và Co-host được bảo vệ theo cấp quyền.
 - Danh sách phòng công khai trên trang chủ, đồng bộ qua một Firebase index riêng.
 - Ba chế độ loop, queue kéo thả, bình chọn, chống bài trùng bằng transaction, lịch sử 50 bài, tổng thời lượng và xóa toàn bộ queue.
-- Dashboard trạng thái Firebase/player/voice với tự phục hồi và thao tác retry thủ công.
-- Player phân loại lỗi YouTube, tự thử lại tối đa 2 lần và để một coordinator duy nhất tự bỏ qua video hỏng.
+- Dashboard trạng thái Firebase/player/voice với playback diagnostics ẩn danh trong 24 giờ gần nhất.
+- Player fallback từ privacy embed sang standard embed; chỉ tự bỏ qua lỗi video chắc chắn và giữ bài lỗi trong queue để Host thử lại.
+- PWA cài được trên thiết bị, cache app shell để mở lại khi mạng chập chờn và hỗ trợ safe-area trên mobile.
 - Activity log hiển thị 100 thay đổi gần nhất: thêm/xóa/chuyển bài, cài đặt, phân quyền và moderation.
 - Firebase App Check (reCAPTCHA Enterprise), Database Rules và Worker rate limit bảo vệ các endpoint dễ bị spam.
 - Room settings cho quyền thêm bài, chat, public/private và các nhóm SponsorBlock.

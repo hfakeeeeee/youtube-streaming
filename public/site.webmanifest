@@ -2,8 +2,15 @@
   "name": "Syncbox — nghe cùng nhau",
   "short_name": "Syncbox",
   "description": "Phòng nghe YouTube đồng bộ, tối giản và cộng tác.",
+  "id": "./",
   "start_url": "./",
+  "scope": "./",
   "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "lang": "vi",
+  "dir": "ltr",
+  "categories": ["music", "entertainment", "social"],
+  "orientation": "any",
   "background_color": "#090A11",
   "theme_color": "#7650E8",
   "icons": [
@@ -11,7 +18,7 @@
       "src": "favicon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
       "src": "app-icon-512.png",

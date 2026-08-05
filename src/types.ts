@@ -16,6 +16,16 @@ export interface QueueItem extends VideoItem {
   addedBy: string;
   addedByName: string;
   votes?: Record<string, true>;
+  playbackIssue?: QueuePlaybackIssue;
+}
+
+export interface QueuePlaybackIssue {
+  status: 'retrying' | 'failed';
+  message: string;
+  code?: number;
+  embedMode: 'private' | 'standard';
+  attempts: number;
+  updatedAt: number;
 }
 
 export interface QueueHistoryItem extends VideoItem {
@@ -108,6 +118,19 @@ export interface ActivityLogItem {
   actorUid: string;
   actorName: string;
   text: string;
+  createdAt: number;
+}
+
+export interface PlaybackDiagnostic {
+  id: string;
+  event: 'playing' | 'error' | 'fallback' | 'buffering';
+  videoId: string;
+  embedMode: 'private' | 'standard';
+  playerState: number;
+  startupMs?: number;
+  errorCode?: number;
+  browser: 'chrome' | 'edge' | 'firefox' | 'safari' | 'other';
+  device: 'mobile' | 'desktop';
   createdAt: number;
 }
 
