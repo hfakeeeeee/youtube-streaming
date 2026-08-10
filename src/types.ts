@@ -124,7 +124,7 @@ export interface ActivityLogItem {
 
 export interface PlaybackDiagnostic {
   id: string;
-  event: 'playing' | 'error' | 'fallback' | 'buffering';
+  event: 'playing' | 'error' | 'fallback' | 'buffering' | 'api_error' | 'api_timeout' | 'ready_timeout' | 'autoplay_blocked' | 'stalled' | 'recovered';
   videoId: string;
   embedMode: 'private' | 'standard';
   playerState: number;
@@ -132,6 +132,10 @@ export interface PlaybackDiagnostic {
   errorCode?: number;
   browser: 'chrome' | 'edge' | 'firefox' | 'safari' | 'other';
   device: 'mobile' | 'desktop';
+  clientId: string;
+  visibility: 'visible' | 'hidden';
+  online: boolean;
+  coordinator: boolean;
   createdAt: number;
 }
 

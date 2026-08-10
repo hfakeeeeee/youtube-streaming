@@ -30,24 +30,50 @@ interface Props {
   onEnded?: () => void;
   onError?: (code: number) => void;
   onAutoplayBlocked?: () => void;
+  onUnavailable?: (reason: 'api_error' | 'api_timeout' | 'ready_timeout') => void;
 }
 
 let apiPromise: Promise<any> | null = null;
+const YOUTUBE_API_SRC = 'https://www.youtube.com/iframe_api';
+const API_LOAD_TIMEOUT_MS = 10000;
 
 function loadApi(): Promise<any> {
   if (window.YT?.Player) return Promise.resolve(window.YT);
   if (apiPromise) return apiPromise;
-  apiPromise = new Promise((resolve) => {
+  apiPromise = new Promise((resolve, reject) => {
+    let settled = false;
     const previous = window.onYouTubeIframeAPIReady;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      script?.removeEventListener('error', handleError);
+      callback();
+    };
     window.onYouTubeIframeAPIReady = () => {
       previous?.();
-      resolve(window.YT);
+      finish(() => resolve(window.YT));
     };
-    if (!document.querySelector('script[src="https://www.youtube.com/iframe_api"]')) {
-      const script = document.createElement('script');
-      script.src = 'https://www.youtube.com/iframe_api';
+    let script = document.querySelector<HTMLScriptElement>(`script[src="${YOUTUBE_API_SRC}"]`);
+    const handleError = () => finish(() => {
+      script?.remove();
+      reject(new Error('api_error'));
+    });
+    if (!script) {
+      script = document.createElement('script');
+      script.src = YOUTUBE_API_SRC;
+      script.async = true;
       document.head.appendChild(script);
     }
+    script.addEventListener('error', handleError, { once: true });
+    const timeout = window.setTimeout(() => finish(() => {
+      script?.remove();
+      reject(new Error('api_timeout'));
+    }), API_LOAD_TIMEOUT_MS);
+  }).catch((error) => {
+    // A failed singleton must not poison all later player remounts.
+    apiPromise = null;
+    throw error;
   });
   return apiPromise;
 }
@@ -67,17 +93,17 @@ function buildEmbedUrl(videoId: string | undefined, startSeconds: number, embedM
 }
 
 export const YouTubePlayer = forwardRef<PlayerHandle, Props>(function YouTubePlayer(
-  { videoId, startSeconds = 0, autoPlay = false, embedMode = 'private', onReady, onCued, onPlaying, onEnded, onError, onAutoplayBlocked },
+  { videoId, startSeconds = 0, autoPlay = false, embedMode = 'private', onReady, onCued, onPlaying, onEnded, onError, onAutoplayBlocked, onUnavailable },
   forwardedRef,
 ) {
   const mountRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<any>(null);
   const iframeId = useRef(`syncbox-youtube-${Math.random().toString(36).slice(2)}`).current;
-  const latestCallbacks = useRef({ onReady, onCued, onPlaying, onEnded, onError, onAutoplayBlocked });
+  const latestCallbacks = useRef({ onReady, onCued, onPlaying, onEnded, onError, onAutoplayBlocked, onUnavailable });
   const initialVideo = useRef({ videoId, startSeconds, embedMode });
   const latestStartSeconds = useRef(startSeconds);
   const [ready, setReady] = useState(false);
-  latestCallbacks.current = { onReady, onCued, onPlaying, onEnded, onError, onAutoplayBlocked };
+  latestCallbacks.current = { onReady, onCued, onPlaying, onEnded, onError, onAutoplayBlocked, onUnavailable };
   latestStartSeconds.current = startSeconds;
 
   useImperativeHandle(forwardedRef, () => ({
@@ -97,6 +123,8 @@ export const YouTubePlayer = forwardRef<PlayerHandle, Props>(function YouTubePla
 
   useEffect(() => {
     let disposed = false;
+    let playerReady = false;
+    let readyTimeout: number | undefined;
     const mount = mountRef.current;
     if (!mount) return undefined;
 
@@ -118,10 +146,15 @@ export const YouTubePlayer = forwardRef<PlayerHandle, Props>(function YouTubePla
 
     loadApi().then((YT) => {
       if (disposed || !mountRef.current || playerRef.current) return;
+      readyTimeout = window.setTimeout(() => {
+        if (!disposed && !playerReady) latestCallbacks.current.onUnavailable?.('ready_timeout');
+      }, 12000);
       playerRef.current = new YT.Player(iframeId, {
         events: {
           onReady: () => {
             if (disposed) return;
+            playerReady = true;
+            window.clearTimeout(readyTimeout);
             setReady(true);
             latestCallbacks.current.onReady?.();
             const cuedId = String(playerRef.current?.getVideoData?.()?.video_id ?? '');
@@ -142,9 +175,13 @@ export const YouTubePlayer = forwardRef<PlayerHandle, Props>(function YouTubePla
           onAutoplayBlocked: () => latestCallbacks.current.onAutoplayBlocked?.(),
         },
       });
+    }).catch((error) => {
+      if (disposed) return;
+      latestCallbacks.current.onUnavailable?.(error instanceof Error && error.message === 'api_timeout' ? 'api_timeout' : 'api_error');
     });
     return () => {
       disposed = true;
+      window.clearTimeout(readyTimeout);
       playerRef.current?.destroy?.();
       playerRef.current = null;
       mount.replaceChildren();
