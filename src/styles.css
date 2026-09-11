@@ -456,14 +456,14 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 .queue-move-buttons button:disabled { opacity: .2; }
 .queue-grip { flex: none; }
 .member-admin { display: flex; align-items: center; gap: 5px; }
-.member-admin > button { width: 29px; height: 29px; display: grid; place-items: center; border: 1px solid rgba(139,92,246,.18); border-radius: 7px; color: #ac96f4; background: rgba(139,92,246,.07); cursor: pointer; }
+.member-admin > button, .member-inline-actions > .moderation-button { width: 29px; height: 29px; display: grid; place-items: center; border: 1px solid rgba(139,92,246,.18); border-radius: 7px; color: #ac96f4; background: rgba(139,92,246,.07); cursor: pointer; }
 .member-admin > button:hover { color: #fff; background: rgba(139,92,246,.18); }
 .member-admin > .voice-force-mute.active, .voice-force-mute.active { color: #fb91a2; border-color: rgba(251,113,133,.28); background: rgba(251,113,133,.09); }
 .member-inline-actions { display: flex; align-items: center; gap: 4px; }
 .member-inline-actions > button { width: 31px; height: 31px; display: grid; place-items: center; padding: 0; border-radius: 8px; cursor: pointer; }
 .member-inline-actions > .voice-force-mute { border: 1px solid rgba(139,92,246,.18); color: #9a91ac; background: rgba(255,255,255,.025); }
-.member-admin > .moderation-button:hover { color: #f4cf75; border-color: rgba(251,191,36,.22); background: rgba(251,191,36,.07); }
-.member-admin > .moderation-button.ban:hover { color: #fb91a2; border-color: rgba(251,113,133,.22); background: rgba(251,113,133,.07); }
+.member-admin > .moderation-button:hover, .member-inline-actions > .moderation-button:hover { color: #f4cf75; border-color: rgba(251,191,36,.22); background: rgba(251,191,36,.07); }
+.member-admin > .moderation-button.ban:hover, .member-inline-actions > .moderation-button.ban:hover { color: #fb91a2; border-color: rgba(251,113,133,.22); background: rgba(251,113,133,.07); }
 .member-admin > .role-toggle { position: relative; width: 31px; height: 31px; display: grid; place-items: center; padding: 0; border: 1px solid rgba(139,92,246,.18); border-radius: 8px; color: #8f8b9d; background: rgba(255,255,255,.025); cursor: pointer; transition: color .18s, border-color .18s, background .18s, box-shadow .18s; }
 .member-admin > .role-toggle:hover { color: #d9d1ff; border-color: rgba(139,92,246,.4); background: rgba(139,92,246,.12); }
 .member-admin > .role-toggle.dj { color: var(--accent); border-color: rgba(56,214,232,.32); background: rgba(56,214,232,.09); box-shadow: inset 0 0 0 1px rgba(56,214,232,.05), 0 0 16px rgba(56,214,232,.08); }

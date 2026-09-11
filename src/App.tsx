@@ -552,6 +552,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   const isOwner = Boolean(uid && meta?.hostUid === uid);
   const isCoHost = Boolean(uid && meta?.coHosts?.[uid]);
   const isHost = isOwner || isCoHost;
+  const canManageLoop = isOwner || isCoHost;
   const canManageQueue = isHost || me?.role === 'dj';
   const canControlPlayback = isHost || me?.role === 'dj';
   const canAdd = canManageQueue || Boolean(meta?.allowListenersToAdd);
@@ -1491,7 +1492,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   skipRef.current = skip;
 
   async function cycleLoopMode() {
-    if (!isHost) return;
+    if (!canManageLoop) return;
     const next: LoopMode = loopMode === 'off' ? 'one' : loopMode === 'one' ? 'all' : 'off';
     await updateRoomMeta(roomId, { loopMode: next });
     logActivity('loop_change', `đổi chế độ lặp thành ${next === 'off' ? 'Tắt' : next === 'one' ? 'Lặp một bài' : 'Lặp toàn bộ'}`);
@@ -1870,7 +1871,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   async function handleKick(member: Member) {
     if (!canModerate(member) || !window.confirm(`Đưa ${member.name} khỏi phòng? Người này vẫn có thể tham gia lại.`)) return;
     try {
-      await kickMember(roomId, member.uid);
+      await kickMember(roomId, member.uid, isOwner && Boolean(meta?.coHosts?.[member.uid]));
       logActivity('moderation', `đưa ${member.name} khỏi phòng`);
       showNotice(`Đã đưa ${member.name} khỏi phòng.`);
     } catch (cause) {
@@ -1881,7 +1882,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   async function handleBan(member: Member) {
     if (!canModerate(member) || !window.confirm(`Cấm ${member.name} tham gia lại phòng này?`)) return;
     try {
-      await banMember(roomId, member, uid);
+      await banMember(roomId, member, uid, isOwner && Boolean(meta?.coHosts?.[member.uid]));
       logActivity('moderation', `cấm ${member.name} tham gia phòng`);
       showNotice(`Đã cấm ${member.name}.`);
     } catch (cause) {
@@ -2050,7 +2051,7 @@ function RoomPage({ roomId }: { roomId: string }) {
               <button
                 className={`loop-button ${loopMode !== 'off' ? 'active' : ''}`}
                 onClick={() => void cycleLoopMode()}
-                disabled={!isHost}
+                disabled={!canManageLoop}
                 aria-label={loopMode === 'off' ? 'Bật lặp một bài' : loopMode === 'one' ? 'Bật lặp queue' : 'Tắt lặp'}
                 title={loopMode === 'off' ? 'Không lặp' : loopMode === 'one' ? 'Lặp một bài' : 'Lặp queue'}
               >
@@ -2300,7 +2301,7 @@ function RoomPage({ roomId }: { roomId: string }) {
                       {member.musicMuted && <span className="music-muted-label"><VolumeX size={10} /> Đã tắt tiếng nhạc</span>}
                     </div>
                     {member.uid === meta.hostUid ? <Crown className="host-crown" size={17} /> : meta.coHosts?.[member.uid] ? (
-                      isOwner ? <span className="member-inline-actions"><button className="cohost-button active" title="Thu hồi quyền Co-host" onClick={() => void setCoHost(member, false)}><ShieldCheck size={15} /></button>{voiceByUid.has(member.uid) && <button className={`voice-force-mute ${voiceByUid.get(member.uid)?.forcedMuted ? 'active' : ''}`} title={voiceByUid.get(member.uid)?.forcedMuted ? 'Cho phép bật mic' : 'Mute khỏi voice'} onClick={() => void toggleMemberVoiceMute(member)}><MicOff size={14} /></button>}</span> : <ShieldCheck className="cohost-mark" size={17} />
+                      isOwner ? <span className="member-inline-actions"><button className="cohost-button active" title="Thu hồi quyền Co-host" onClick={() => void setCoHost(member, false)}><ShieldCheck size={15} /></button>{voiceByUid.has(member.uid) && <button className={`voice-force-mute ${voiceByUid.get(member.uid)?.forcedMuted ? 'active' : ''}`} title={voiceByUid.get(member.uid)?.forcedMuted ? 'Cho phép bật mic' : 'Mute khỏi voice'} onClick={() => void toggleMemberVoiceMute(member)}><MicOff size={14} /></button>}<button className="moderation-button" title="Đưa khỏi phòng và thu hồi Co-host" onClick={() => void handleKick(member)}><UserMinus size={14} /></button><button className="moderation-button ban" title="Cấm khỏi phòng và thu hồi Co-host" onClick={() => void handleBan(member)}><Ban size={14} /></button></span> : <ShieldCheck className="cohost-mark" size={17} />
                     ) : isHost ? (
                       <div className="member-admin">
                         {isOwner && <button title="Thêm Co-host" onClick={() => void setCoHost(member, true)}><ShieldCheck size={14} /></button>}

@@ -431,18 +431,24 @@ export function closeRoom(roomId: string): Promise<void> {
   return update(ref(db), { [`rooms/${roomId}`]: null, [`publicRooms/${roomId}`]: null, [`roomExpirations/${roomId}`]: null });
 }
 
-export function kickMember(roomId: string, uid: string): Promise<void> {
+export function kickMember(roomId: string, uid: string, revokeCoHost = false): Promise<void> {
   const { db } = requireFirebase();
-  return remove(ref(db, `rooms/${roomId}/members/${uid}`));
+  if (!revokeCoHost) return remove(ref(db, `rooms/${roomId}/members/${uid}`));
+  return update(ref(db), {
+    [`rooms/${roomId}/members/${uid}`]: null,
+    [`rooms/${roomId}/meta/coHosts/${uid}`]: null,
+  });
 }
 
-export function banMember(roomId: string, member: Member, bannedBy: string): Promise<void> {
+export function banMember(roomId: string, member: Member, bannedBy: string, revokeCoHost = false): Promise<void> {
   const { db } = requireFirebase();
   const record: BanRecord = { uid: member.uid, name: member.name, bannedAt: Date.now(), bannedBy };
-  return update(ref(db), {
+  const updates: Record<string, BanRecord | null> = {
     [`rooms/${roomId}/bans/${member.uid}`]: record,
     [`rooms/${roomId}/members/${member.uid}`]: null,
-  });
+  };
+  if (revokeCoHost) updates[`rooms/${roomId}/meta/coHosts/${member.uid}`] = null;
+  return update(ref(db), updates);
 }
 
 export function unbanMember(roomId: string, uid: string): Promise<void> {
