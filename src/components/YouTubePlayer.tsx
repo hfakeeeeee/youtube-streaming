@@ -35,7 +35,7 @@ interface Props {
 
 let apiPromise: Promise<any> | null = null;
 const YOUTUBE_API_SRC = 'https://www.youtube.com/iframe_api';
-const API_LOAD_TIMEOUT_MS = 10000;
+const API_LOAD_TIMEOUT_MS = 20000;
 
 function loadApi(): Promise<any> {
   if (window.YT?.Player) return Promise.resolve(window.YT);
@@ -136,7 +136,6 @@ export const YouTubePlayer = forwardRef<PlayerHandle, Props>(function YouTubePla
     iframe.width = '100%';
     iframe.height = '100%';
     iframe.setAttribute('frameborder', '0');
-    if (initialVideo.current.embedMode === 'private') iframe.setAttribute('credentialless', '');
     iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-presentation');
     iframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; fullscreen; web-share');
     iframe.setAttribute('allowfullscreen', '');
@@ -148,7 +147,7 @@ export const YouTubePlayer = forwardRef<PlayerHandle, Props>(function YouTubePla
       if (disposed || !mountRef.current || playerRef.current) return;
       readyTimeout = window.setTimeout(() => {
         if (!disposed && !playerReady) latestCallbacks.current.onUnavailable?.('ready_timeout');
-      }, 12000);
+      }, 25000);
       playerRef.current = new YT.Player(iframeId, {
         events: {
           onReady: () => {
