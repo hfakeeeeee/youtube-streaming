@@ -141,7 +141,7 @@ const YOUTUBE_EMBED_MODE_KEY = 'syncbox:youtube-embed-mode';
 type PlayerEmbedMode = 'private' | 'standard';
 
 function loadPreferredEmbedMode(): PlayerEmbedMode {
-  return localStorage.getItem(YOUTUBE_EMBED_MODE_KEY) === 'standard' ? 'standard' : 'private';
+  return sessionStorage.getItem(YOUTUBE_EMBED_MODE_KEY) === 'standard' ? 'standard' : 'private';
 }
 
 function loadRecentRooms(): RecentRoom[] {
@@ -1617,7 +1617,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     setNeedsActivation(false);
     setPlayerRecoveryMessage('');
     setPlayerIssue('');
-    localStorage.setItem(YOUTUBE_EMBED_MODE_KEY, playerEmbedMode);
+    sessionStorage.setItem(YOUTUBE_EMBED_MODE_KEY, playerEmbedMode);
     const successKey = `${videoId}:${playback.revision}`;
     if (reportedPlaybackSuccess.current !== successKey) {
       reportedPlaybackSuccess.current = successKey;
