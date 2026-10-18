@@ -536,8 +536,14 @@ export function updateRoomMeta(roomId: string, patch: Partial<RoomMeta>): Promis
 
 export function saveRoomSettings(roomId: string, settings: RoomMeta): Promise<void> {
   const { db } = requireFirebase();
+  // Co-hosts can update settings without write access to hostUid/coHosts.
+  const editableFields = ['name', 'isPublic', 'sponsorBlockEnabled', 'sponsorCategories', 'loopMode', 'allowListenersToAdd', 'chatEnabled', 'expiresAt'] as const;
+  const metaUpdates: Record<string, unknown> = {};
+  for (const field of editableFields) {
+    if (settings[field] !== undefined) metaUpdates[`rooms/${roomId}/meta/${field}`] = settings[field];
+  }
   return update(ref(db), {
-    [`rooms/${roomId}/meta`]: settings,
+    ...metaUpdates,
     [`publicRooms/${roomId}`]: settings.isPublic
       ? { name: settings.name, updatedAt: serverTimestamp(), ownerUid: settings.hostUid }
       : null,

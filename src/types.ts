@@ -87,6 +87,7 @@ export interface PlaybackState {
   status: PlaybackStatus;
   position: number;
   volume: number;
+  playbackRate?: number;
   updatedAt: number;
   revision: number;
   changedBy: string;

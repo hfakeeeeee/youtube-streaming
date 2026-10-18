@@ -372,7 +372,7 @@ function HomePage() {
 
 function expectedPosition(playback: PlaybackState, serverOffset = 0) {
   if (playback.status !== 'playing' || typeof playback.updatedAt !== 'number') return playback.position;
-  return Math.max(0, playback.position + (Date.now() + serverOffset - playback.updatedAt) / 1000);
+  return Math.max(0, playback.position + (Date.now() + serverOffset - playback.updatedAt) / 1000 * (playback.playbackRate ?? 1));
 }
 
 const chatTimestampFormatter = new Intl.DateTimeFormat('vi-VN', {
@@ -456,6 +456,7 @@ function playbackClientId(): string {
 function RoomPage({ roomId }: { roomId: string }) {
   const [uid, setUid] = useState('');
   const [meta, setMeta] = useState<RoomMeta | null>(null);
+  const [availablePlaybackRates, setAvailablePlaybackRates] = useState<number[]>([1]);
   const [playback, setPlayback] = useState<PlaybackState>(EMPTY_PLAYBACK);
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [queueHistory, setQueueHistory] = useState<QueueHistoryItem[]>([]);
@@ -1524,14 +1525,35 @@ function RoomPage({ roomId }: { roomId: string }) {
   async function cycleLoopMode() {
     if (!canManageLoop) return;
     const next: LoopMode = loopMode === 'off' ? 'one' : loopMode === 'one' ? 'all' : 'off';
-    await updateRoomMeta(roomId, { loopMode: next });
-    logActivity('loop_change', `đổi chế độ lặp thành ${next === 'off' ? 'Tắt' : next === 'one' ? 'Lặp một bài' : 'Lặp toàn bộ'}`);
+    try {
+      await updateRoomMeta(roomId, { loopMode: next });
+      logActivity('loop_change', `đổi chế độ lặp thành ${next === 'off' ? 'Tắt' : next === 'one' ? 'Lặp một bài' : 'Lặp toàn bộ'}`);
+    } catch (cause) {
+      showNotice(cause instanceof Error ? cause.message : 'Không thể đổi chế độ lặp.');
+    }
   }
 
   async function seekTo(position: number) {
     if (!isHost) return;
     playerRef.current?.seek(position);
     await writePlayback(roomId, uid, { position, status: playback.status, reason: 'control' });
+  }
+
+  async function changePlaybackRate(playbackRate: number) {
+    if (!canControlPlayback || !playback.video || controlBusy) return;
+    setControlBusy(true);
+    try {
+      await writePlayback(roomId, uid, {
+        playbackRate,
+        position: expectedPosition(playback, serverOffset),
+        status: playback.status,
+        reason: 'control',
+      });
+    } catch (cause) {
+      showNotice(cause instanceof Error ? cause.message : 'Không thể đổi tốc độ phát.');
+    } finally {
+      setControlBusy(false);
+    }
   }
 
   function setDeviceVolume(volume: number) {
@@ -1973,13 +1995,13 @@ function RoomPage({ roomId }: { roomId: string }) {
       }
       navigator.mediaSession.setPositionState({
         duration,
-        playbackRate: 1,
+        playbackRate: playback.playbackRate ?? 1,
         position: Math.min(duration, Math.max(0, displayPosition)),
       });
     } catch {
       // Some browsers expose Media Session but reject position state for iframe media.
     }
-  }, [displayPosition, playback.video]);
+  }, [displayPosition, playback.video, playback.playbackRate]);
 
   useEffect(() => {
     if (!('mediaSession' in navigator)) return;
@@ -2044,7 +2066,9 @@ function RoomPage({ roomId }: { roomId: string }) {
                 videoId={playback.video.id}
                 startSeconds={expectedPosition(playback, serverOffset)}
                 autoPlay={playback.status === 'playing' || (playback.reason === 'queue' && canControlPlayback)}
+                playbackRate={playback.playbackRate ?? 1}
                 embedMode={playerEmbedMode}
+                onPlaybackRates={setAvailablePlaybackRates}
                 onReady={conformPlayer}
                 onCued={handlePlayerCued}
                 onPlaying={handlePlayerPlaying}
@@ -2122,6 +2146,19 @@ function RoomPage({ roomId }: { roomId: string }) {
               onKeyUp={(event) => { if (event.key === 'Enter') void seekTo(Number((event.target as HTMLInputElement).value)); }}
             />
             <span>{formatDuration(playerRef.current?.duration() || playback.video?.duration) || '0:00'}</span>
+            <label className="playback-speed" title="Tốc độ phát chung của phòng">
+              <span>Speed</span>
+              <select
+                aria-label="Tốc độ phát"
+                value={playback.playbackRate ?? 1}
+                disabled={!canControlPlayback || !playback.video || controlBusy}
+                onChange={(event) => void changePlaybackRate(Number(event.target.value))}
+              >
+                {[0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.25, 3.5, 3.75, 4].map((rate) => (
+                  <option key={rate} value={rate} disabled={!availablePlaybackRates.includes(rate)}>{rate}x</option>
+                ))}
+              </select>
+            </label>
             <Volume2 size={15} />
             <input
               className="volume-slider"

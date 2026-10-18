@@ -23,8 +23,10 @@ interface Props {
   videoId?: string;
   startSeconds?: number;
   autoPlay?: boolean;
+  playbackRate?: number;
   embedMode?: 'private' | 'standard';
   onReady?: () => void;
+  onPlaybackRates?: (rates: number[]) => void;
   onCued?: (videoId: string) => void;
   onPlaying?: (videoId: string) => void;
   onEnded?: () => void;
@@ -93,17 +95,19 @@ function buildEmbedUrl(videoId: string | undefined, startSeconds: number, embedM
 }
 
 export const YouTubePlayer = forwardRef<PlayerHandle, Props>(function YouTubePlayer(
-  { videoId, startSeconds = 0, autoPlay = false, embedMode = 'private', onReady, onCued, onPlaying, onEnded, onError, onAutoplayBlocked, onUnavailable },
+  { videoId, startSeconds = 0, autoPlay = false, playbackRate = 1, embedMode = 'private', onReady, onCued, onPlaying, onEnded, onError, onAutoplayBlocked, onUnavailable, onPlaybackRates },
   forwardedRef,
 ) {
   const mountRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<any>(null);
   const iframeId = useRef(`syncbox-youtube-${Math.random().toString(36).slice(2)}`).current;
-  const latestCallbacks = useRef({ onReady, onCued, onPlaying, onEnded, onError, onAutoplayBlocked, onUnavailable });
+  const latestCallbacks = useRef({ onReady, onCued, onPlaying, onEnded, onError, onAutoplayBlocked, onUnavailable, onPlaybackRates });
   const initialVideo = useRef({ videoId, startSeconds, embedMode });
   const latestStartSeconds = useRef(startSeconds);
+  const latestPlaybackRate = useRef(playbackRate);
+  latestPlaybackRate.current = playbackRate;
   const [ready, setReady] = useState(false);
-  latestCallbacks.current = { onReady, onCued, onPlaying, onEnded, onError, onAutoplayBlocked, onUnavailable };
+  latestCallbacks.current = { onReady, onCued, onPlaying, onEnded, onError, onAutoplayBlocked, onUnavailable, onPlaybackRates };
   latestStartSeconds.current = startSeconds;
 
   useImperativeHandle(forwardedRef, () => ({
@@ -154,12 +158,21 @@ export const YouTubePlayer = forwardRef<PlayerHandle, Props>(function YouTubePla
             if (disposed) return;
             playerReady = true;
             window.clearTimeout(readyTimeout);
+            latestCallbacks.current.onPlaybackRates?.(playerRef.current?.getAvailablePlaybackRates?.() ?? [1]);
             setReady(true);
+            playerRef.current?.setPlaybackRate?.(latestPlaybackRate.current);
             latestCallbacks.current.onReady?.();
             const cuedId = String(playerRef.current?.getVideoData?.()?.video_id ?? '');
             if (cuedId) latestCallbacks.current.onCued?.(cuedId);
           },
           onStateChange: (event: { data: number }) => {
+            // YouTube resets the rate when loading/cueing another video.
+            if (event.data === YT.PlayerState.CUED || event.data === YT.PlayerState.PLAYING) {
+              latestCallbacks.current.onPlaybackRates?.(playerRef.current?.getAvailablePlaybackRates?.() ?? [1]);
+              if (playerRef.current?.getPlaybackRate?.() !== latestPlaybackRate.current) {
+                playerRef.current?.setPlaybackRate?.(latestPlaybackRate.current);
+              }
+            }
             if (event.data === YT.PlayerState.CUED) {
               const cuedId = String(playerRef.current?.getVideoData?.()?.video_id ?? '');
               if (cuedId) latestCallbacks.current.onCued?.(cuedId);
@@ -199,6 +212,10 @@ export const YouTubePlayer = forwardRef<PlayerHandle, Props>(function YouTubePla
     const state = Number(playerRef.current?.getPlayerState?.() ?? -1);
     if (autoPlay && state !== 1 && state !== 3) playerRef.current?.playVideo?.();
   }, [autoPlay, ready, videoId]);
+
+  useEffect(() => {
+    if (ready) playerRef.current?.setPlaybackRate?.(playbackRate);
+  }, [ready, playbackRate]);
 
   return <div className="youtube-player" ref={mountRef} aria-label="YouTube player" />;
 });

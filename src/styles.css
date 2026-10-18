@@ -810,3 +810,8 @@ button:disabled { opacity: .42; cursor: not-allowed; }
   .player-recovery > span { font-size: 10px; }
   .pwa-install { left: 10px; bottom: max(10px,env(safe-area-inset-bottom)); padding: 10px 12px; }
 }
+
+.playback-speed { display: flex; align-items: center; gap: 5px; flex-shrink: 0; color: #aaa5bb; font-size: 10px; }
+.playback-speed select { padding: 5px 3px; border: 1px solid var(--line-strong); border-radius: 6px; background: #151321; color: #eee9ff; font: inherit; cursor: pointer; }
+.playback-speed select:disabled { opacity: .5; cursor: not-allowed; }
+.playback-speed select:focus-visible { outline: 2px solid var(--primary-bright); outline-offset: 2px; }
