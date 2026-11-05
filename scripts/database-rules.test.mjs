@@ -64,5 +64,23 @@ test('room permissions: Co-host loop/settings and playback speeds through 4x', a
   }
   assert.equal((await request('rooms/TEST/members/owner-user/online', 'PUT', false)).status, 200);
   assert.equal((await request('rooms/TEST/meta', 'PATCH', { hostUid: 'dj', 'coHosts/stranger': true }, 'dj')).status, 401);
-  assert.equal((await request('rooms/TEST/meta', 'PATCH', { hostUid: 'cohost' }, 'cohost')).status, 200);
+  // A dropped connection must never let another client permanently take ownership.
+  for (const uid of ['cohost', 'dj', 'listener']) {
+    assert.equal((await request('rooms/TEST/meta', 'PATCH', { hostUid: uid }, uid)).status, 401);
+    assert.equal((await request('rooms/TEST/meta/hostUid', 'PUT', uid, uid)).status, 401);
+    assert.equal((await request('rooms/TEST/meta', 'PUT', { ...meta, hostUid: uid }, uid)).status, 401);
+  }
+  // Playback still works while the owner is offline.
+  for (const uid of ['cohost', 'dj']) {
+    assert.equal((await request('rooms/TEST/playback', 'PATCH', { status: 'playing' }, uid)).status, 200);
+  }
+  assert.equal((await request('rooms/TEST/meta', 'PATCH', { loopMode: 'off' }, 'cohost')).status, 200);
+  assert.equal((await request('rooms/TEST/members/owner-user/online', 'PUT', true)).status, 200);
+  assert.equal(await (await request('rooms/TEST/meta/hostUid', 'GET')).json(), 'owner-user');
+  // Explicit handoff remains atomic, and the previous owner becomes Co-host.
+  assert.equal((await request('rooms/TEST/meta', 'PATCH', {
+    hostUid: 'cohost', 'coHosts/cohost': null, 'coHosts/owner-user': true,
+  }, 'owner-user')).status, 200);
+  assert.equal((await request('rooms/TEST/meta/hostUid', 'PUT', 'owner-user', 'owner-user')).status, 401);
+  assert.equal((await request('rooms/TEST/meta/hostUid', 'PUT', 'owner-user', 'cohost')).status, 200);
 });

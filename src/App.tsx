@@ -1109,17 +1109,6 @@ function RoomPage({ roomId }: { roomId: string }) {
   }, [connectionOpen]);
 
   useEffect(() => {
-    if (!meta || !uid || !connected || (!isCoHost && me?.role !== 'dj') || members.some((member) => member.uid === meta.hostUid && member.online)) return;
-    const timer = window.setTimeout(() => {
-      void transferHost(roomId, uid).then(() => {
-        if (me?.name) void recordActivity(roomId, { uid, name: me.name }, 'owner_transfer', 'tự động tiếp quản Owner vì Owner cũ mất kết nối').catch(() => undefined);
-        setNotice({ message: 'Bạn đã tiếp quản Owner vì Owner cũ mất kết nối.', tone: 'success' });
-      }).catch(() => undefined);
-    }, 15000);
-    return () => window.clearTimeout(timer);
-  }, [connected, isCoHost, me?.name, me?.role, members, meta, roomId, uid]);
-
-  useEffect(() => {
     if (!connected || !uid) return;
     const displayName = localStorage.getItem('syncbox:name') || 'Guest';
     void joinRoom(roomId, displayName).catch((cause) => {

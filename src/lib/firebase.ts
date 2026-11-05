@@ -333,29 +333,15 @@ export async function transferHost(roomId: string, newHostUid: string): Promise<
   if (!metaSnapshot.exists()) throw new Error('Phòng không còn tồn tại.');
   const meta = metaSnapshot.val() as RoomMeta;
   if (meta.hostUid === newHostUid) return;
+  if (user.uid !== meta.hostUid) throw new Error('Chỉ Owner hiện tại có thể chuyển quyền Owner.');
   const listing = await get(ref(db, `publicRooms/${roomId}`));
-  const isManualTransfer = user.uid === meta.hostUid;
-
-  if (isManualTransfer) {
-    const updates: Record<string, unknown> = {
-      [`rooms/${roomId}/meta/hostUid`]: newHostUid,
-      [`rooms/${roomId}/meta/coHosts/${newHostUid}`]: null,
-      [`rooms/${roomId}/meta/coHosts/${meta.hostUid}`]: true,
-    };
-    if (listing.exists()) updates[`publicRooms/${roomId}/ownerUid`] = newHostUid;
-    await update(ref(db), updates);
-    return;
-  }
-
-  // During automatic takeover, update meta first. Public-room rules only allow
-  // the new owner to update the listing after this write has succeeded.
-  await update(ref(db), { [`rooms/${roomId}/meta/hostUid`]: newHostUid });
-  const followUp: Record<string, unknown> = {
-    [`rooms/${roomId}/members/${newHostUid}/role`]: 'host',
-    [`rooms/${roomId}/members/${meta.hostUid}/role`]: 'listener',
+  const updates: Record<string, unknown> = {
+    [`rooms/${roomId}/meta/hostUid`]: newHostUid,
+    [`rooms/${roomId}/meta/coHosts/${newHostUid}`]: null,
+    [`rooms/${roomId}/meta/coHosts/${meta.hostUid}`]: true,
   };
-  if (listing.exists()) followUp[`publicRooms/${roomId}/ownerUid`] = newHostUid;
-  await update(ref(db), followUp);
+  if (listing.exists()) updates[`publicRooms/${roomId}/ownerUid`] = newHostUid;
+  await update(ref(db), updates);
 }
 
 export function normalizeHistory(value: Record<string, Omit<QueueHistoryItem, 'historyId'>> | null): QueueHistoryItem[] {

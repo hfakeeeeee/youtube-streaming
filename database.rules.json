@@ -23,7 +23,7 @@
         "meta": {
           ".read": "auth != null",
           ".write": "auth != null && ((!data.exists() && newData.child('hostUid').val() === auth.uid) || data.child('hostUid').val() === auth.uid)",
-          ".validate": "newData.hasChildren(['name','hostUid','createdAt','sponsorBlockEnabled','sponsorCategories']) && newData.child('name').isString() && newData.child('name').val().length <= 60 && (!newData.child('loopMode').exists() || newData.child('loopMode').val() === 'off' || newData.child('loopMode').val() === 'one' || newData.child('loopMode').val() === 'all') && (!newData.child('allowListenersToAdd').exists() || newData.child('allowListenersToAdd').isBoolean()) && (!newData.child('chatEnabled').exists() || newData.child('chatEnabled').isBoolean()) && (!newData.child('expiresAt').exists() || newData.child('expiresAt').isNumber()) && (!data.exists() || newData.child('hostUid').val() === data.child('hostUid').val() || data.child('hostUid').val() === auth.uid || (newData.child('hostUid').val() === auth.uid && root.child('rooms').child($roomId).child('members').child(data.child('hostUid').val()).child('online').val() != true))",
+          ".validate": "newData.hasChildren(['name','hostUid','createdAt','sponsorBlockEnabled','sponsorCategories']) && newData.child('name').isString() && newData.child('name').val().length <= 60 && (!newData.child('loopMode').exists() || newData.child('loopMode').val() === 'off' || newData.child('loopMode').val() === 'one' || newData.child('loopMode').val() === 'all') && (!newData.child('allowListenersToAdd').exists() || newData.child('allowListenersToAdd').isBoolean()) && (!newData.child('chatEnabled').exists() || newData.child('chatEnabled').isBoolean()) && (!newData.child('expiresAt').exists() || newData.child('expiresAt').isNumber()) && (!data.exists() || newData.child('hostUid').val() === data.child('hostUid').val() || data.child('hostUid').val() === auth.uid)",
           "name": {
             ".write": "auth != null && root.child('rooms').child($roomId).child('meta').child('coHosts').child(auth.uid).val() === true"
           },
@@ -47,9 +47,6 @@
           },
           "expiresAt": {
             ".write": "auth != null && root.child('rooms').child($roomId).child('meta').child('coHosts').child(auth.uid).val() === true"
-          },
-          "hostUid": {
-            ".write": "auth != null && newData.val() === auth.uid && root.child('rooms').child($roomId).child('members').child(data.val()).child('online').val() != true && (root.child('rooms').child($roomId).child('meta').child('coHosts').child(auth.uid).val() === true || root.child('rooms').child($roomId).child('members').child(auth.uid).child('role').val() === 'dj')"
           }
         },
         "playback": {
