@@ -1,0 +1,23 @@
+# Syncbox interface
+
+- Direction approved: purple + charcoal, liquid glass surfaces; supersedes the slate/mint direction.
+- Preserve existing routes, data, handlers and product functionality; simplify user-facing Vietnamese copy.
+- Background: `--bg`; panels: `--surface`, `--surface-2`, `--surface-3` in `src/styles.css`.
+- Accent: `--primary`, `--primary-bright`, `--accent` in `src/styles.css`.
+- Typography: self-hosted Inter (400, 500, 600, 700); `--app-font` in `src/styles.css`.
+- Liquid glass: translucent panels, backdrop blur/saturation, reflective inset edges and soft depth shadows. Static violet ambient light behind glass; video remains darkest.
+- Home entry uses separate Create/Join modes with a shared name field, mode-specific field and one submit button; preserve typed values between modes.
+- Mobile introduction is compact so entry controls appear early; single-column layout on narrow screens.
+- Entry card is the primary reflective glass surface; header and empty states are subdued. Supporting instructions have no glass containers.
+- Violet ambient light is localized around the entry card; no detached decorative circle on mobile.
+- Violet is the only action accent; red and green reserved for semantic status.
+- Opaque fallback without backdrop-filter; reduced blur on mobile; no animated background or per-row blur.
+- Dark appearance only; no light-mode toggle requested.
+- Visible keyboard focus, reduced-motion support and 4px autohiding scrollbars.
+- Listening room: two main columns (video + queue/chat/activity), search inside queue, full-width persistent playback dock. On mobile, video above tabbed content and dock stays visible.
+- Members and voice controls live in a modal drawer opened from header avatars; Escape closes it and keyboard focus returns to the trigger.
+- Header retains room identity, member trigger and invite; secondary utilities in More menu. Glass emphasis belongs to playback dock and floating panels; reading surfaces remain charcoal.
+- Room name and code centered on the viewport; on mobile they occupy a centered header row.
+- Playback dock uses balanced left/center/right zones: track metadata, centered transport + seek, device volume/speed. Dock and sidebar have separate rounded boundaries and an explicit gap.
+- App-owned install prompt and installation guide removed at user request.
+- Collapsed side panel is a compact floating toolbar centered vertically; equal icon targets, selected tile instead of edge indicator, labels on hover/keyboard focus. Mobile keeps full-width content tabs.

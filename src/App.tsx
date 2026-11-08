@@ -12,7 +12,7 @@ import {
   Crown,
   Compass,
   CircleHelp,
-  Download,
+  MoreHorizontal,
   Headphones,
   History,
   ListMusic,
@@ -113,11 +113,6 @@ const EMPTY_PLAYBACK: PlaybackState = {
   changedBy: '',
 };
 
-interface BeforeInstallPromptEvent extends Event {
-  prompt: () => Promise<void>;
-  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
-}
-
 const SPONSOR_CATEGORY_OPTIONS = [
   ['sponsor', 'Sponsor'],
   ['selfpromo', 'Tự quảng bá'],
@@ -207,36 +202,11 @@ function CreatorLinks({ compact = false }: { compact?: boolean }) {
 
 export default function App() {
   const route = useHashRoute();
-  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
-
-  useEffect(() => {
-    const capturePrompt = (event: Event) => {
-      event.preventDefault();
-      setInstallPrompt(event as BeforeInstallPromptEvent);
-    };
-    const clearPrompt = () => setInstallPrompt(null);
-    window.addEventListener('beforeinstallprompt', capturePrompt);
-    window.addEventListener('appinstalled', clearPrompt);
-    return () => {
-      window.removeEventListener('beforeinstallprompt', capturePrompt);
-      window.removeEventListener('appinstalled', clearPrompt);
-    };
-  }, []);
-
-  async function installApp() {
-    if (!installPrompt) return;
-    await installPrompt.prompt();
-    await installPrompt.userChoice;
-    setInstallPrompt(null);
-  }
-
-  return <>
-    {route.page === 'room' ? <RoomPage roomId={route.roomId} /> : <HomePage />}
-    {installPrompt && <button className="pwa-install" onClick={() => void installApp()}><Download size={16} /><span>Cài Syncbox</span></button>}
-  </>;
+  return route.page === 'room' ? <RoomPage roomId={route.roomId} /> : <HomePage />;
 }
 
 function HomePage() {
+  const [entryMode, setEntryMode] = useState<'create' | 'join'>('create');
   const [name, setName] = useState(() => localStorage.getItem('syncbox:name') ?? '');
   const [roomName, setRoomName] = useState('');
   const [roomCode, setRoomCode] = useState('');
@@ -310,23 +280,27 @@ function HomePage() {
           </div>
         </div>
         <div className="room-card">
-          <div className="room-card-tabs"><span className="active">Tạo phòng</span><span>hoặc tham gia bên dưới</span></div>
+          <div className="entry-mode" role="group" aria-label="Chọn cách vào phòng">
+            <button type="button" aria-pressed={entryMode === 'create'} disabled={busy} onClick={() => { setEntryMode('create'); setError(''); }}>Tạo phòng</button>
+            <button type="button" aria-pressed={entryMode === 'join'} disabled={busy} onClick={() => { setEntryMode('join'); setError(''); }}>Tham gia</button>
+          </div>
+          <h2 className="entry-title">{entryMode === 'create' ? 'Mở một không gian chung.' : 'Cùng vào phòng của bạn bè.'}</h2>
           {!firebaseConfigured && (
             <div className="setup-warning"><Settings2 size={18} /><div><strong>Cần cấu hình Firebase</strong><span>Sao chép .env.example thành .env.local và điền thông tin dự án.</span></div></div>
           )}
-          <label>Tên của bạn<input value={name} onChange={(event) => setName(event.target.value)} placeholder="Ví dụ: Huy" maxLength={32} /></label>
-          <form onSubmit={handleCreate}>
-            <label>Tên phòng<input value={roomName} onChange={(event) => setRoomName(event.target.value)} placeholder="Friday focus" maxLength={60} /></label>
+          <form className="entry-form" onSubmit={entryMode === 'create' ? handleCreate : handleJoin} aria-busy={busy}>
+            <label htmlFor="entry-name">Tên của bạn<input id="entry-name" autoComplete="nickname" value={name} onChange={(event) => setName(event.target.value)} placeholder="Ví dụ: Huy" maxLength={32} required disabled={busy} /></label>
+            {entryMode === 'create' ? (
+              <label htmlFor="entry-room-name">Tên phòng <span className="field-optional">Không bắt buộc</span><input id="entry-room-name" value={roomName} onChange={(event) => setRoomName(event.target.value)} placeholder="Ví dụ: Góc nhạc tối nay" maxLength={60} disabled={busy} /></label>
+            ) : (
+              <label htmlFor="entry-room-code">Mã phòng<input id="entry-room-code" className="room-code-input" value={roomCode} onChange={(event) => setRoomCode(event.target.value.toUpperCase())} placeholder="Nhập mã bạn được chia sẻ" maxLength={8} autoComplete="off" autoCapitalize="characters" spellCheck={false} required disabled={busy} /></label>
+            )}
             <button className="primary-button" disabled={busy || !firebaseConfigured}>
-              {busy ? <LoaderCircle className="spin" size={19} /> : <Radio size={19} />} Tạo phòng mới
+              {busy ? <LoaderCircle className="spin" size={19} /> : entryMode === 'create' ? <Radio size={19} /> : <ChevronRight size={19} />}
+              {busy ? 'Đang kết nối…' : entryMode === 'create' ? 'Tạo phòng mới' : 'Tham gia phòng'}
             </button>
+            {error && <p className="form-error" role="alert">{error}</p>}
           </form>
-          <div className="or"><span />hoặc<span /></div>
-          <form className="join-row" onSubmit={handleJoin}>
-            <input value={roomCode} onChange={(event) => setRoomCode(event.target.value.toUpperCase())} placeholder="Mã phòng" maxLength={8} />
-            <button disabled={busy || !roomCode.trim() || !firebaseConfigured}>Tham gia <ChevronRight size={17} /></button>
-          </form>
-          {error && <p className="form-error">{error}</p>}
           {recentRooms.length > 0 && (
             <div className="recent-rooms">
               <div className="recent-heading"><span><History size={15} /> Phòng gần đây</span><small>{recentRooms.length}/6</small></div>
@@ -335,7 +309,7 @@ function HomePage() {
                   <article className="recent-room" key={room.roomId}>
                     <a href={`#/room/${room.roomId}`}>
                       <span className="recent-room-icon">{room.name.slice(0, 1).toUpperCase()}</span>
-                      <span className="recent-room-copy"><strong>{room.name}</strong><small>{room.roomId} · {room.role === 'host' ? 'Host' : room.role === 'dj' ? 'DJ' : 'Listener'}</small></span>
+                      <span className="recent-room-copy"><strong>{room.name}</strong><small>{room.roomId} · {room.role === 'host' ? 'Chủ phòng' : room.role === 'dj' ? 'DJ' : 'Người nghe'}</small></span>
                       <ChevronRight size={16} />
                     </a>
                     <button aria-label={`Xóa ${room.name} khỏi phòng gần đây`} onClick={() => {
@@ -358,12 +332,12 @@ function HomePage() {
             <span><strong>{room.name}</strong><small>{room.roomId} · Tham gia ngay</small></span>
             <ChevronRight size={17} />
           </a>
-        ))}</div> : <div className="public-empty"><Compass /><span>Chưa có phòng công khai</span><small>Bật “Phòng công khai” trong cài đặt room để xuất hiện ở đây.</small></div>}
+        ))}</div> : <div className="public-empty"><Compass /><span>Chưa có phòng công khai</span><small>Bạn có thể tạo phòng rồi bật chế độ công khai trong cài đặt.</small></div>}
       </section>
       <section className="how" id="how-it-works">
         <article><span>01</span><Headphones /><h3>Tạo một phòng</h3><p>Không cần đăng ký. Chỉ cần đặt tên và chia sẻ mã phòng.</p></article>
-        <article><span>02</span><ListMusic /><h3>Cùng xây queue</h3><p>Dán link hoặc nhập từ khóa rồi Enter để tìm kiếm YouTube.</p></article>
-        <article><span>03</span><WandSparkles /><h3>Phát đồng bộ</h3><p>Play, pause, seek và SponsorBlock áp dụng cho toàn bộ phòng.</p></article>
+        <article><span>02</span><ListMusic /><h3>Cùng tạo hàng đợi</h3><p>Dán liên kết hoặc nhập từ khóa để tìm video trên YouTube.</p></article>
+        <article><span>03</span><WandSparkles /><h3>Phát đồng bộ</h3><p>Phát, tạm dừng, tua và bỏ qua tài trợ được đồng bộ cho cả phòng.</p></article>
       </section>
       <footer className="home-footer"><Brand /><span>Một không gian nghe YouTube sạch và cộng tác.</span><CreatorLinks /></footer>
     </main>
@@ -476,7 +450,36 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [activePanel, setActivePanel] = useState<'queue' | 'chat' | 'activity'>('queue');
   const [queueView, setQueueView] = useState<'upcoming' | 'history'>('upcoming');
   const [sidePanelCollapsed, setSidePanelCollapsed] = useState(() => localStorage.getItem('syncbox:side-panel-collapsed') === '1');
-  const [rosterCollapsed, setRosterCollapsed] = useState(() => localStorage.getItem('syncbox:roster-collapsed') === '1');
+  const [rosterCollapsed, setRosterCollapsed] = useState(true);
+  useEffect(() => {
+    const dismissMenu = (event: Event) => {
+      const menu = document.querySelector<HTMLDetailsElement>('.room-utilities[open]');
+      if (!menu) return;
+      if (event instanceof KeyboardEvent && event.key === 'Escape') { menu.open = false; menu.querySelector<HTMLElement>('summary')?.focus(); }
+      else if (event.type === 'pointerdown' && event.target instanceof Node && !menu.contains(event.target)) menu.open = false;
+    };
+    document.addEventListener('keydown', dismissMenu);
+    document.addEventListener('pointerdown', dismissMenu);
+    return () => { document.removeEventListener('keydown', dismissMenu); document.removeEventListener('pointerdown', dismissMenu); };
+  }, []);
+  useEffect(() => {
+    if (rosterCollapsed) return;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const drawer = document.getElementById('room-members');
+    const focusable = () => Array.from(drawer?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), [tabindex="0"]') ?? []).filter((element) => element.getClientRects().length > 0);
+    focusable()[0]?.focus();
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { setRosterCollapsed(true); }
+      if (event.key !== 'Tab') return;
+      const elements = focusable();
+      const first = elements[0];
+      const last = elements[elements.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => { document.removeEventListener('keydown', handleKey); previousFocus?.focus(); };
+  }, [rosterCollapsed]);
   const [chatText, setChatText] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -2031,12 +2034,21 @@ function RoomPage({ roomId }: { roomId: string }) {
         <Brand />
         <div className="room-identity"><span>{meta.name}</span><small>{meta.isPublic ? <Globe2 size={12} /> : <LockKeyhole size={12} />} {meta.isPublic ? 'Phòng công khai' : 'Phòng riêng tư'} · {roomId}</small></div>
         <div className="room-actions">
+          <button className="members-trigger" aria-label="Mở thành viên và trò chuyện thoại" aria-expanded={!rosterCollapsed} aria-controls="room-members" onClick={toggleRoster}>
+            <span className="member-avatar-stack" aria-hidden="true">{members.filter((member) => member.online).slice(0, 3).map((member) => <i key={member.uid} className={speakingUids.has(member.uid) ? 'speaking' : ''}>{member.name.slice(0, 1).toUpperCase()}</i>)}</span>
+            <Users size={16} /><span>{onlineMemberCount} đang nghe</span>
+          </button>
+          <button className="invite-button" aria-label={copied ? 'Đã sao chép lời mời' : 'Mời bạn bè'} onClick={() => void copyInvite()}><Share2 size={17} /><span className="invite-label">{copied ? 'Đã sao chép' : 'Mời bạn bè'}</span></button>
+          <details className="room-utilities">
+            <summary aria-label="Tiện ích phòng"><MoreHorizontal size={20} /></summary>
+            <div className="room-utility-menu" onClick={(event) => { const details = event.currentTarget.closest('details'); if (details) details.open = false; }}>
           <button type="button" className={`online-pill connection-pill ${connectionNeedsAttention ? 'degraded' : connected === null ? 'connecting' : ''}`} title="Xem trạng thái kết nối" onClick={() => setConnectionOpen(true)}><i /> {onlineMemberCount} đang nghe</button>
           <button className="help-button" onClick={() => setHelpOpen(true)}><CircleHelp size={17} /> Hướng dẫn</button>
           <button className={`notification-button ${notificationsEnabled ? 'active' : ''} ${notificationPermission === 'denied' ? 'blocked' : ''}`} title={notificationsEnabled ? 'Tắt thông báo trình duyệt' : notificationPermission === 'denied' ? 'Thông báo đang bị trình duyệt chặn' : 'Bật thông báo trình duyệt'} aria-pressed={notificationsEnabled} onClick={() => void toggleBrowserNotifications()}>{notificationsEnabled ? <Bell size={17} /> : <BellOff size={17} />} <span>{notificationsEnabled ? 'Thông báo bật' : 'Thông báo'}</span></button>
-          <button className="invite-button" onClick={() => void copyInvite()}><Share2 size={17} /> {copied ? 'Đã sao chép' : 'Mời bạn bè'}</button>
           {isHost && <button onClick={openSettings}><Settings2 size={17} /> Cài đặt</button>}
-          <button className="avatar-button" title={`${me?.name ?? 'Tài khoản'} · Đổi tên`} aria-label="Mở hồ sơ và đổi tên" onClick={openProfile}>{me?.name?.slice(0, 1).toUpperCase()}</button>
+          <button className="profile-menu-button" title={`${me?.name ?? 'Tài khoản'} · Đổi tên`} aria-label="Mở hồ sơ và đổi tên" onClick={openProfile}><Pencil size={16} /> Hồ sơ và tên hiển thị</button>
+            </div>
+          </details>
         </div>
       </header>
 
@@ -2045,7 +2057,6 @@ function RoomPage({ roomId }: { roomId: string }) {
 
       <div className={`room-shell ${sidePanelCollapsed ? 'panel-collapsed' : ''} ${rosterCollapsed ? 'roster-collapsed' : ''}`}>
         <section className="player-column">
-          <SearchPanel canAdd={Boolean(canAdd)} onAdd={addToQueue} />
 
           <div className="video-stage" ref={videoStageRef}>
             {playback.video ? (
@@ -2070,7 +2081,7 @@ function RoomPage({ roomId }: { roomId: string }) {
                 onUnavailable={handlePlayerUnavailable}
               />
             ) : (
-              <div className="empty-player"><div><ListMusic size={34} /><span>Queue đang trống</span><small>Dán một link YouTube để bắt đầu.</small></div></div>
+              <div className="empty-player"><div><ListMusic size={34} /><span>Chọn bài đầu tiên cho cả phòng</span><small>Tìm video hoặc dán liên kết trong hàng đợi.</small><button className="empty-player-add" onClick={() => { openSidePanel('queue'); requestAnimationFrame(() => document.querySelector<HTMLInputElement>('.queue-panel .search-box input')?.focus()); }}><Search size={16} /> Tìm và thêm bài</button></div></div>
             )}
             {needsActivation && playback.video && (
               <button className="activation-overlay" onClick={() => { playerRef.current?.activate(); setNeedsActivation(false); }}><Volume2 /> Bấm để tiếp tục phát</button>
@@ -2096,91 +2107,28 @@ function RoomPage({ roomId }: { roomId: string }) {
             </button>
           </div>
 
-          <div className="now-playing">
-            <div className="track-art">{playback.video ? <img src={playback.video.thumbnail} alt="" /> : <ListMusic />}</div>
-            <div className="track-copy">
-              <span>ĐANG PHÁT</span>
-              <strong title={playback.video?.title}>{playback.video?.title ?? 'Chưa có video'}</strong>
-              <small title={playback.video?.channel}>{playback.video?.channel ?? 'Thêm bài đầu tiên vào queue'}</small>
-            </div>
-            <div className="room-controls">
-              <button className="control-main" onClick={() => void control(playback.status === 'playing' ? 'paused' : 'playing')} disabled={!canControlPlayback || !playback.video || controlBusy}>
-                {controlBusy ? <LoaderCircle className="spin" /> : playback.status === 'playing' ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}
-              </button>
-              <button onClick={() => void skip(loopMode === 'one' ? 'off' : loopMode)} disabled={!canControlPlayback || !playback.video}><SkipForward /></button>
-              <button
-                className={`loop-button ${loopMode !== 'off' ? 'active' : ''}`}
-                onClick={() => void cycleLoopMode()}
-                disabled={!canManageLoop}
-                aria-label={loopMode === 'off' ? 'Bật lặp một bài' : loopMode === 'one' ? 'Bật lặp queue' : 'Tắt lặp'}
-                title={loopMode === 'off' ? 'Không lặp' : loopMode === 'one' ? 'Lặp một bài' : 'Lặp queue'}
-              >
-                <Repeat2 />
-                {loopMode === 'one' && <span>1</span>}
-              </button>
-            </div>
-          </div>
-          <div className="timeline-controls">
-            <span>{formatDuration(displayPosition) || '0:00'}</span>
-            <input
-              aria-label="Vị trí phát"
-              type="range"
-              min="0"
-              max={Math.max(1, playerRef.current?.duration() || playback.video?.duration || 1)}
-              step="1"
-              value={Math.min(displayPosition, playerRef.current?.duration() || playback.video?.duration || 1)}
-              disabled={!isHost || !playback.video}
-              onChange={(event) => setDisplayPosition(Number(event.target.value))}
-              onPointerUp={(event) => void seekTo(Number((event.target as HTMLInputElement).value))}
-              onKeyUp={(event) => { if (event.key === 'Enter') void seekTo(Number((event.target as HTMLInputElement).value)); }}
-            />
-            <span>{formatDuration(playerRef.current?.duration() || playback.video?.duration) || '0:00'}</span>
-            <label className="playback-speed" title="Tốc độ phát chung của phòng">
-              <span>Speed</span>
-              <select
-                aria-label="Tốc độ phát"
-                value={playback.playbackRate ?? 1}
-                disabled={!canControlPlayback || !playback.video || controlBusy}
-                onChange={(event) => void changePlaybackRate(Number(event.target.value))}
-              >
-                {[0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.25, 3.5, 3.75, 4].map((rate) => (
-                  <option key={rate} value={rate} disabled={!availablePlaybackRates.includes(rate)}>{rate}x</option>
-                ))}
-              </select>
-            </label>
-            <Volume2 size={15} />
-            <input
-              className="volume-slider"
-              aria-label="Âm lượng thiết bị"
-              type="range"
-              min="0"
-              max="100"
-              value={localVolume}
-              onChange={(event) => setDeviceVolume(Number(event.target.value))}
-            />
-          </div>
-
           <div className="room-note"><ShieldCheck size={15} /><span>Video được phát trực tiếp từ YouTube. Syncbox chỉ đồng bộ trạng thái phòng.</span></div>
         </section>
 
         <aside className={`side-panel ${sidePanelCollapsed ? 'collapsed' : ''}`}>
           <div className="panel-tabs">
-            <button className={activePanel === 'queue' ? 'active' : ''} title="Queue" onClick={() => openSidePanel('queue')}><ListMusic /><b>Queue</b><span>{queue.length}</span></button>
-            <button className={activePanel === 'chat' ? 'active' : ''} title={unreadChatCount > 0 ? `Chat · ${unreadChatCount} tin chưa đọc` : 'Chat'} onClick={() => openSidePanel('chat')}><MessageCircle /><b>Chat</b>{unreadChatCount > 0 && <span className="unread-badge" aria-label={`${unreadChatCount} tin chưa đọc`}>{unreadChatCount > 99 ? '99+' : unreadChatCount}</span>}</button>
-            <button className={activePanel === 'activity' ? 'active' : ''} title="Hoạt động" onClick={() => openSidePanel('activity')}><ScrollText /><b>Log</b></button>
-            <button className="panel-collapse" title={sidePanelCollapsed ? 'Mở bảng bên' : 'Thu gọn bảng bên'} aria-label={sidePanelCollapsed ? 'Mở bảng bên' : 'Thu gọn bảng bên'} onClick={toggleSidePanel}>
+            <button className={activePanel === 'queue' ? 'active' : ''} aria-pressed={activePanel === 'queue'} aria-label={`Hàng đợi · ${queue.length} bài`} data-tooltip="Hàng đợi" title="Hàng đợi" onClick={() => openSidePanel('queue')}><ListMusic /><b>Hàng đợi</b><span>{queue.length}</span></button>
+            <button className={activePanel === 'chat' ? 'active' : ''} aria-pressed={activePanel === 'chat'} aria-label={unreadChatCount > 0 ? `Trò chuyện · ${unreadChatCount} tin chưa đọc` : 'Trò chuyện'} data-tooltip="Trò chuyện" title={unreadChatCount > 0 ? `Trò chuyện · ${unreadChatCount} tin chưa đọc` : 'Trò chuyện'} onClick={() => openSidePanel('chat')}><MessageCircle /><b>Trò chuyện</b>{unreadChatCount > 0 && <span className="unread-badge" aria-label={`${unreadChatCount} tin chưa đọc`}>{unreadChatCount > 99 ? '99+' : unreadChatCount}</span>}</button>
+            <button className={activePanel === 'activity' ? 'active' : ''} aria-pressed={activePanel === 'activity'} aria-label="Hoạt động" data-tooltip="Hoạt động" title="Hoạt động" onClick={() => openSidePanel('activity')}><ScrollText /><b>Hoạt động</b></button>
+            <button className="panel-collapse" data-tooltip="Mở bảng bên" aria-expanded={!sidePanelCollapsed} title={sidePanelCollapsed ? 'Mở bảng bên' : 'Thu gọn bảng bên'} aria-label={sidePanelCollapsed ? 'Mở bảng bên' : 'Thu gọn bảng bên'} onClick={toggleSidePanel}>
               {sidePanelCollapsed ? <PanelRightOpen /> : <PanelRightClose />}
             </button>
           </div>
 
           {activePanel === 'queue' && (
             <div className="panel-body queue-panel">
+              <SearchPanel canAdd={Boolean(canAdd)} onAdd={addToQueue} />
               <div className="panel-title">
                 <div><strong>{queueView === 'upcoming' ? 'Tiếp theo' : 'Đã phát'}</strong><span>{queueView === 'upcoming' ? `${queue.length} video ${queueDuration > 0 ? `· ${formatDuration(queueDuration)}` : ''}` : `${queueHistory.length} bài gần nhất`}</span></div>
                 {queueView === 'upcoming' && canManageQueue && queue.length > 0 && <button className="clear-queue" onClick={() => void handleClearQueue()}><Trash2 size={14} /> Xóa hết</button>}
               </div>
               <div className="queue-view-tabs" role="tablist" aria-label="Queue và lịch sử">
-                <button className={queueView === 'upcoming' ? 'active' : ''} onClick={() => setQueueView('upcoming')}><ListMusic size={13} /> Queue <span>{queue.length}</span></button>
+                <button className={queueView === 'upcoming' ? 'active' : ''} onClick={() => setQueueView('upcoming')}><ListMusic size={13} /> Sắp phát <span>{queue.length}</span></button>
                 <button className={queueView === 'history' ? 'active' : ''} onClick={() => setQueueView('history')}><History size={13} /> Lịch sử <span>{queueHistory.length}</span></button>
               </div>
               {queueView === 'upcoming' ? <div className="queue-list">
@@ -2300,12 +2248,13 @@ function RoomPage({ roomId }: { roomId: string }) {
 
         </aside>
 
-        <aside className={`member-roster ${rosterCollapsed ? 'collapsed' : ''}`} aria-label="Thành viên trong phòng">
+        {!rosterCollapsed && <button className="roster-scrim" tabIndex={-1} aria-label="Đóng danh sách thành viên" onClick={toggleRoster} />}
+        <aside id="room-members" role="dialog" aria-modal={!rosterCollapsed || undefined} className={`member-roster ${rosterCollapsed ? 'collapsed' : ''}`} aria-label="Thành viên trong phòng">
           <div className="roster-header">
             <div><Users /><strong>Thành viên</strong></div>
             <span>{onlineMemberCount} online</span>
             <button className="roster-collapse" title={rosterCollapsed ? 'Mở danh sách thành viên' : 'Thu gọn danh sách thành viên'} aria-label={rosterCollapsed ? 'Mở danh sách thành viên' : 'Thu gọn danh sách thành viên'} onClick={toggleRoster}>
-              {rosterCollapsed ? <PanelRightOpen /> : <PanelRightClose />}
+              <X />
             </button>
           </div>
           <section className={`voice-card ${voiceJoined ? 'joined' : ''}`}>
@@ -2393,10 +2342,75 @@ function RoomPage({ roomId }: { roomId: string }) {
         </aside>
       </div>
 
-      <footer className="room-footer">
-        <span>Syncbox được xây dựng bởi <strong>HFake</strong></span>
-        <CreatorLinks compact />
-      </footer>
+      <section className="playback-dock" aria-label="Điều khiển phát nhạc">
+          <div className="now-playing">
+            <div className="track-art">{playback.video ? <img src={playback.video.thumbnail} alt="" /> : <ListMusic />}</div>
+            <div className="track-copy">
+              <span>ĐANG PHÁT</span>
+              <strong title={playback.video?.title}>{playback.video?.title ?? 'Chưa có video'}</strong>
+              <small title={playback.video?.channel}>{playback.video?.channel ?? 'Thêm bài đầu tiên vào hàng đợi'}</small>
+            </div>
+            <div className="room-controls">
+              <button
+                className={`loop-button ${loopMode !== 'off' ? 'active' : ''}`}
+                onClick={() => void cycleLoopMode()}
+                disabled={!canManageLoop}
+                aria-label={loopMode === 'off' ? 'Bật lặp một bài' : loopMode === 'one' ? 'Bật lặp queue' : 'Tắt lặp'}
+                title={loopMode === 'off' ? 'Không lặp' : loopMode === 'one' ? 'Lặp một bài' : 'Lặp queue'}
+              >
+                <Repeat2 />
+                {loopMode === 'one' && <span>1</span>}
+              </button>
+              <button className="control-main" aria-label={playback.status === 'playing' ? 'Tạm dừng' : 'Phát nhạc'} onClick={() => void control(playback.status === 'playing' ? 'paused' : 'playing')} disabled={!canControlPlayback || !playback.video || controlBusy}>
+                {controlBusy ? <LoaderCircle className="spin" /> : playback.status === 'playing' ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}
+              </button>
+              <button aria-label="Bài tiếp theo" onClick={() => void skip(loopMode === 'one' ? 'off' : loopMode)} disabled={!canControlPlayback || !playback.video}><SkipForward /></button>
+
+            </div>
+          </div>
+          <div className="timeline-controls">
+            <span>{formatDuration(displayPosition) || '0:00'}</span>
+            <input
+              aria-label="Vị trí phát"
+              type="range"
+              min="0"
+              max={Math.max(1, playerRef.current?.duration() || playback.video?.duration || 1)}
+              step="1"
+              value={Math.min(displayPosition, playerRef.current?.duration() || playback.video?.duration || 1)}
+              disabled={!isHost || !playback.video}
+              onChange={(event) => setDisplayPosition(Number(event.target.value))}
+              onPointerUp={(event) => void seekTo(Number((event.target as HTMLInputElement).value))}
+              onKeyUp={(event) => { if (event.key === 'Enter') void seekTo(Number((event.target as HTMLInputElement).value)); }}
+            />
+            <span>{formatDuration(playerRef.current?.duration() || playback.video?.duration) || '0:00'}</span>
+          </div>
+          <div className="device-controls">
+            <label className="playback-speed" title="Tốc độ phát chung của phòng">
+              <span>Speed</span>
+              <select
+                aria-label="Tốc độ phát"
+                value={playback.playbackRate ?? 1}
+                disabled={!canControlPlayback || !playback.video || controlBusy}
+                onChange={(event) => void changePlaybackRate(Number(event.target.value))}
+              >
+                {[0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.25, 3.5, 3.75, 4].map((rate) => (
+                  <option key={rate} value={rate} disabled={!availablePlaybackRates.includes(rate)}>{rate}x</option>
+                ))}
+              </select>
+            </label>
+            <Volume2 size={15} />
+            <input
+              className="volume-slider"
+              aria-label="Âm lượng thiết bị"
+              type="range"
+              min="0"
+              max="100"
+              value={localVolume}
+              onChange={(event) => setDeviceVolume(Number(event.target.value))}
+            />
+          </div>
+
+      </section>
 
       {connectionOpen && (
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setConnectionOpen(false); }}>
@@ -2459,7 +2473,6 @@ function RoomPage({ roomId }: { roomId: string }) {
               <article><i><MessageCircle /></i><div><strong>Chat</strong><span>Badge hiển thị tin chưa đọc và tự xóa khi bạn mở chat hoặc cuộn xuống cuối.</span></div></article>
               <article><i><Bell /></i><div><strong>Thông báo</strong><span>Bật bằng nút chuông trên header để nhận chat mới, thay đổi quyền và voice mute khi tab chạy nền.</span></div></article>
               <article><i><AudioWaveform /></i><div><strong>Media Session</strong><span>Hiển thị bài trên màn hình khóa; Play, Pause và Next phụ thuộc việc trình duyệt có chuyển action từ YouTube iframe cho Syncbox hay không.</span></div></article>
-              <article><i><Download /></i><div><strong>Cài Syncbox</strong><span>Chrome/Edge sẽ hiện nút Cài Syncbox. Trên iPhone, dùng Chia sẻ → Thêm vào Màn hình chính.</span></div></article>
               <article><i><WifiOff /></i><div><strong>Trạng thái kết nối</strong><span>Bấm vào số người đang nghe trên header để kiểm tra Firebase, player, voice và chạy phục hồi thủ công.</span></div></article>
               <article><i><Crown /></i><div><strong>Chuyển Owner</strong><span>Owner bấm biểu tượng vương miện cạnh một thành viên online; Owner cũ sẽ trở thành Co-host.</span></div></article>
               <article><i><Sparkles /></i><div><strong>SponsorBlock</strong><span>Tự bỏ qua sponsor và các phân đoạn cộng đồng đã đánh dấu.</span></div></article>

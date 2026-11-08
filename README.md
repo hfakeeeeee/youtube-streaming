@@ -305,6 +305,13 @@ npm run deploy
 
 Để chạy local sau khi bật enforcement, đặt `VITE_FIREBASE_APPCHECK_DEBUG_TOKEN=true`, mở DevTools để lấy debug token rồi đăng ký token đó tại Firebase Console > App Check > menu Web app > **Manage debug tokens**. Không commit debug token và không thêm biến debug này vào GitHub Pages production.
 
+**Nếu thường xuyên thấy “App Check không hợp lệ”:**
+
+- Local: `DEBUG_TOKEN=true` chỉ sinh debug token, không tự đăng ký token với Firebase. Mỗi hồ sơ trình duyệt hoặc phiên thử nghiệm có thể dùng token khác. Khi `exchangeDebugToken` trả 403, kiểm tra token của đúng trình duyệt tại **Manage debug tokens** của đúng Web app. Không chia sẻ token trong ảnh chụp hoặc commit.
+- Production: kiểm tra domain thực tế trong cấu hình reCAPTCHA Enterprise, provider đăng ký tại App Check, site key khi build frontend và App ID frontend/Worker phải khớp. Thay biến `VITE_*` cần build/deploy lại; debug provider chỉ dùng ở local.
+- Code không còn nuốt lỗi cấp token và gửi request thiếu token. Nếu Worker trả 401 với thông báo App Check, frontend làm mới token và thử đúng một lần. Lỗi quyền truy cập khác hoặc lỗi mạng không tự gửi lại POST.
+- Làm mới token không sửa được site key, domain, debug token chưa đăng ký hoặc App ID sai. Cần sửa cấu hình gốc; không tắt enforcement để che lỗi.
+
 Tham khảo: [App Check với reCAPTCHA Enterprise](https://firebase.google.com/docs/app-check/web/recaptcha-enterprise-provider), [debug provider](https://firebase.google.com/docs/app-check/web/debug-provider), [xác minh custom backend](https://firebase.google.com/docs/app-check/custom-resource-backend).
 
 Rate limit hiện tại gồm 12 lượt search/phút, 60 request metadata/phút và 120 request voice/phút trên mỗi dấu vân tay mạng; Realtime Database giới hạn chat 1 tin/1,5 giây và listener thêm queue 1 lượt/1,5 giây. Giao diện giữ queue ở tối đa 100 bài. Đây là lớp giảm spam, không thay thế quota chính thức của YouTube/Firebase/Cloudflare.

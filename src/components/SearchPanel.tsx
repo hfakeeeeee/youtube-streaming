@@ -115,15 +115,15 @@ export function SearchPanel({ canAdd, onAdd }: Props) {
           onKeyDown={(event) => {
             if (event.key === 'Enter') void submit();
           }}
-          placeholder="Tên bài hát, nghệ sĩ hoặc link YouTube..."
+          placeholder="Tìm bài hoặc dán liên kết"
           aria-label="Tìm hoặc thêm video"
         />
-        {query && !busy && <button className="icon-button" onClick={() => { setQuery(''); setResults([]); }}><X size={17} /></button>}
+        {query && !busy && <button className="icon-button" aria-label="Xóa tìm kiếm" onClick={() => { setQuery(''); setResults([]); }}><X size={17} /></button>}
         <button className="search-submit" onClick={() => void submit()} disabled={busy || !query.trim()}>
-          {busy ? <LoaderCircle className="spin" size={18} /> : 'Enter'}
+          {busy ? <LoaderCircle className="spin" size={18} /> : 'Tìm'}
         </button>
       </div>
-      <p className="search-hint">Link được thêm trực tiếp · Từ khóa chỉ được tìm sau khi nhấn Enter</p>
+      <p className="search-hint">Dán liên kết để thêm bài · Nhấn Enter để tìm</p>
       {error && <p className="form-error">{error}</p>}
       {results.length > 0 && (
         <div className="search-results">

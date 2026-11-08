@@ -75,9 +75,16 @@ export async function getFirebaseIdToken(): Promise<string> {
   return (await ensureUser()).getIdToken();
 }
 
-export async function getFirebaseAppCheckToken(): Promise<string> {
+export async function getFirebaseAppCheckToken(forceRefresh = false): Promise<string> {
   if (!appCheck) return '';
-  return (await getToken(appCheck)).token;
+  try {
+    return (await getToken(appCheck, forceRefresh)).token;
+  } catch (cause) {
+    const message = import.meta.env.DEV && import.meta.env.VITE_FIREBASE_APPCHECK_DEBUG_TOKEN
+      ? 'Không cấp được App Check token cho môi trường local. Hãy đăng ký debug token của trình duyệt này tại Firebase Console → App Check → Manage debug tokens, rồi tải lại trang.'
+      : 'Không xác minh được ứng dụng qua App Check. Kiểm tra kết nối hoặc tiện ích chặn reCAPTCHA; nếu lỗi tiếp diễn, cần kiểm tra cấu hình App Check của website.';
+    throw new Error(message, { cause });
+  }
 }
 
 function makeRoomId(): string {
